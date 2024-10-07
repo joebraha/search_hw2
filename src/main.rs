@@ -1,4 +1,4 @@
-// use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeSeq, Serialize};
 use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::{self, HashMap},
@@ -19,7 +19,7 @@ fn main() {
     for line in lines {
         let line = line.unwrap();
         let (docid, line) = insert_doc(line, &mut docs);
-        parse(line, &mut postings, &mut words, docid);
+        parse(line, &mut docs, &mut postings, &mut words, docid);
         count += 1;
         if count > 10000 {
             // TODO: pipe postings into file so that memory use stays low
@@ -33,6 +33,12 @@ fn main() {
     println!("{d}");
     let d = serde_json::to_string(&postings).unwrap();
     println!("{d}");
+    println!(
+        "words: {}, docs: {}, posts: {}",
+        words.words.keys().len(),
+        docs.docs.len(),
+        postings.posts.len()
+    )
 }
 
 fn insert_doc(line: String, docs: &mut DocTable) -> (usize, String) {
@@ -40,27 +46,71 @@ fn insert_doc(line: String, docs: &mut DocTable) -> (usize, String) {
     (docs.add(l.0.to_string()), l.1.to_string())
 }
 
-fn parse(line: String, postings: &mut Postings, words: &mut WordTable, docid: usize) {
+fn parse(
+    line: String,
+    docs: &mut DocTable,
+    postings: &mut Postings,
+    words: &mut WordTable,
+    docid: usize,
+) {
     let delimiters = [',', '.', ';', '\'', '"', '?', '!'];
     let line = line.split(|c| char::is_whitespace(c) || delimiters.contains(&c));
     let mut twords = HashMap::new();
+    let mut doc_count = 0;
     for word in line {
-        match twords.get_mut(word) {
+        let word = word.to_lowercase();
+        doc_count += 1;
+        match twords.get_mut(&word) {
             Some(c) => *c += 1,
             None => {
                 twords.insert(word, 1);
             }
         }
     }
+    docs.set_length(docid, doc_count);
     for (word, count) in twords.iter() {
         words.add(word);
         postings.add(word.to_string(), *count, docid);
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct DocTable {
-    docs: Vec<String>,
+    docs: Vec<(String, u32)>,
+}
+
+impl Serialize for DocTable {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let m = self.docs.iter().enumerate();
+        let mut seq = serializer.serialize_seq(Some(self.docs.len())).unwrap();
+        for d in m {
+            seq.serialize_element(&d).unwrap();
+        }
+        seq.end()
+    }
+}
+
+impl DocTable {
+    fn new() -> Self {
+        return DocTable { docs: Vec::new() };
+    }
+
+    // TODO: convert from usize to normal int type
+    fn add(&mut self, doc: String) -> usize {
+        self.docs.push((doc, 0));
+        return self.docs.len() - 1;
+    }
+
+    fn set_length(&mut self, docid: usize, length: u32) {
+        self.docs[docid].1 = length
+    }
+
+    // fn write_out(&self, file: File) {
+    //     todo!()
+    // }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -127,7 +177,7 @@ impl Postings {
     fn write_out(&mut self, file: File) {
         // consumes all the postings and appends them to the passed in file
         todo!();
-        rmp_serde::write(self, file)
+        // rmp_serde::encode::write(self, file)
     }
 }
 
@@ -136,20 +186,4 @@ struct Posting {
     word: String,
     docid: usize,
     count: u32,
-}
-
-impl DocTable {
-    // TODO: convert from usize to normal int type
-    fn add(&mut self, doc: String) -> usize {
-        self.docs.push(doc);
-        return self.docs.len() - 1;
-    }
-
-    fn write_out(&self, file: File) {
-        todo!()
-    }
-
-    fn new() -> Self {
-        return DocTable { docs: Vec::new() };
-    }
 }
