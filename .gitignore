@@ -1,4 +1,6 @@
 /target
+notsofulldocs.tsv
+collection.tsv
 fulldocs.tsv
 testout*
 Cargo.lock
