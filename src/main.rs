@@ -1,20 +1,28 @@
 use serde::{ser::SerializeSeq, Serialize};
 use serde_derive::{Deserialize, Serialize};
+// use std::thread;
+use std::time;
 use std::{
     collections::{self, HashMap},
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, BufWriter, Write},
 };
 
 const FILE_PATH: &str = "fulldocs.tsv";
 
 fn main() {
     let mut count = 0;
+    let start = time::SystemTime::now();
     let mut docs = DocTable::new();
     let mut words = WordTable::new();
     let mut postings = Postings::new();
+
     let f = File::open(FILE_PATH).unwrap();
     let reader = BufReader::new(f);
+    let mut fdocs = BufWriter::new(File::create("testout_docs.txt").unwrap());
+    let mut fposts = BufWriter::new(File::create("testout_posts.txt").unwrap());
+    let mut fwords = BufWriter::new(File::create("testout_words.txt").unwrap());
+
     let lines = reader.lines();
     for line in lines {
         let line = line.unwrap();
@@ -22,23 +30,62 @@ fn main() {
         parse(line, &mut docs, &mut postings, &mut words, docid);
         count += 1;
         if count > 10000 {
-            // TODO: pipe postings into file so that memory use stays low
-            break;
+            println!(
+                "words: {}, docs: {}, posts: {}, time: {}s",
+                words.words.keys().len(),
+                docs.docs.len(),
+                postings.posts.len(),
+                time::SystemTime::now()
+                    .duration_since(start)
+                    .unwrap()
+                    .as_secs()
+            );
+            // let mut threads = vec![];
+            pipe_posts(&mut postings, &mut fposts);
+            pipe_docs(&mut docs, &mut fdocs);
+            count = 0;
         }
     }
-    // TODO: replace with efficient serialiation of data to files
-    let s = serde_json::to_string(&words).unwrap();
-    println!("{s}");
-    let d = serde_json::to_string(&docs).unwrap();
-    println!("{d}");
-    let d = serde_json::to_string(&postings).unwrap();
-    println!("{d}");
+
     println!(
         "words: {}, docs: {}, posts: {}",
         words.words.keys().len(),
         docs.docs.len(),
         postings.posts.len()
-    )
+    );
+
+    // TODO: threading
+    pipe_posts(&mut postings, &mut fposts);
+    pipe_docs(&mut docs, &mut fdocs);
+    pipe_words(&mut words, &mut fwords);
+}
+
+fn pipe_posts(postings: &mut Postings, fposts: &mut BufWriter<File>) {
+    for post in &postings.posts {
+        fposts
+            // TODO: atoi
+            .write(format!("{} {} {}\n", post.word, post.count, post.docid).as_bytes())
+            .unwrap();
+    }
+    postings.posts.clear();
+}
+
+fn pipe_words(words: &mut WordTable, fwords: &mut BufWriter<File>) {
+    for word in &words.words {
+        fwords
+            .write(format!("{} {}\n", word.0, word.1).as_bytes())
+            .unwrap();
+    }
+    words.words.clear();
+}
+
+fn pipe_docs(docs: &mut DocTable, fdocs: &mut BufWriter<File>) {
+    for doc in &docs.docs {
+        fdocs
+            .write(format!("{} {}\n", doc.0, doc.1).as_bytes())
+            .unwrap();
+    }
+    docs.docs.clear();
 }
 
 fn insert_doc(line: String, docs: &mut DocTable) -> (usize, String) {
@@ -68,9 +115,9 @@ fn parse(
         }
     }
     docs.set_length(docid, doc_count);
-    for (word, count) in twords.iter() {
-        words.add(word);
-        postings.add(word.to_string(), *count, docid);
+    for (word, count) in twords.into_iter() {
+        words.add(&word, count);
+        postings.add(word, count, docid);
     }
 }
 
@@ -107,15 +154,11 @@ impl DocTable {
     fn set_length(&mut self, docid: usize, length: u32) {
         self.docs[docid].1 = length
     }
-
-    // fn write_out(&self, file: File) {
-    //     todo!()
-    // }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct WordTable {
-    words: collections::HashMap<String, Word>,
+    words: collections::HashMap<String, u32>,
 }
 
 impl WordTable {
@@ -124,39 +167,13 @@ impl WordTable {
             words: HashMap::new(),
         };
     }
-    fn add(&mut self, word: &str) {
+    fn add(&mut self, word: &str, count: u32) {
         match self.words.get_mut(word) {
-            Some(w) => w.inc(),
+            Some(c) => *c += 1,
             None => {
-                self.words.insert(word.to_string(), Word::new());
+                self.words.insert(word.to_string(), count);
             }
         }
-    }
-}
-
-struct WordCounter {
-    words: HashMap<String, u32>,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Serialize, Deserialize)]
-struct Word {
-    start: Option<u32>,
-    end: Option<u32>,
-    //    #[serde(skip_serializing)]
-    count: u32,
-}
-
-impl Word {
-    fn new() -> Self {
-        return Self {
-            start: None,
-            end: None,
-            count: 1,
-        };
-    }
-    fn inc(&mut self) {
-        self.count += 1
     }
 }
 
@@ -172,12 +189,6 @@ impl Postings {
 
     fn add(&mut self, word: String, count: u32, docid: usize) {
         self.posts.push(Posting { word, docid, count });
-    }
-
-    fn write_out(&mut self, file: File) {
-        // consumes all the postings and appends them to the passed in file
-        todo!();
-        // rmp_serde::encode::write(self, file)
     }
 }
 
