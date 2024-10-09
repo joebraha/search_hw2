@@ -125,6 +125,7 @@ fn parse(
     }
 }
 
+// now with the ""collection" database doc structure is differnet, but this should still work
 struct DocTable {
     docs: Vec<(String, u32)>,
 }
