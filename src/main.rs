@@ -5,7 +5,7 @@ use std::{
     time,
 };
 
-const FILE_PATH: &str = "fulldocs.tsv";
+const FILE_PATH: &str = "collection.tsv";
 
 fn main() {
     let mut count = 0;
