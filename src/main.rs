@@ -1,11 +1,8 @@
-use serde::{ser::SerializeSeq, Serialize};
-use serde_derive::{Deserialize, Serialize};
-// use std::thread;
-use std::time;
 use std::{
     collections::{self, HashMap},
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
+    time,
 };
 
 const FILE_PATH: &str = "fulldocs.tsv";
@@ -121,23 +118,8 @@ fn parse(
     }
 }
 
-#[derive(Deserialize)]
 struct DocTable {
     docs: Vec<(String, u32)>,
-}
-
-impl Serialize for DocTable {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let m = self.docs.iter().enumerate();
-        let mut seq = serializer.serialize_seq(Some(self.docs.len())).unwrap();
-        for d in m {
-            seq.serialize_element(&d).unwrap();
-        }
-        seq.end()
-    }
 }
 
 impl DocTable {
@@ -156,7 +138,6 @@ impl DocTable {
     }
 }
 
-#[derive(Serialize)]
 struct WordTable {
     words: collections::HashMap<String, u32>,
 }
@@ -177,7 +158,6 @@ impl WordTable {
     }
 }
 
-#[derive(Serialize, Deserialize)]
 struct Postings {
     posts: Vec<Posting>,
 }
@@ -192,7 +172,6 @@ impl Postings {
     }
 }
 
-#[derive(Serialize, Deserialize)]
 struct Posting {
     word: String,
     docid: usize,
