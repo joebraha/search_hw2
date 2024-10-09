@@ -97,13 +97,20 @@ fn parse(
     words: &mut WordTable,
     docid: usize,
 ) {
-    let delimiters = [',', '.', ';', '\'', '"', '?', '!'];
-    let line = line.split(|c| char::is_whitespace(c) || delimiters.contains(&c));
+    // replaced delimiters with is_ascii_punctuation. More aggressive parse, which should result in
+    // better real english words, at the (acceptable) expense of tokenizing ranodm words (math etc.)
+    // let delimiters = [',', '.', ';', ':', '\'', '"', '?', '!'];
+    // TODO: do this in place to save time
+    let line = line.split(|c| char::is_whitespace(c) || char::is_ascii_punctuation(&c));
     let mut twords = HashMap::new();
     let mut doc_count = 0;
     for word in line {
         let word = word.to_lowercase();
         doc_count += 1;
+        // skip non ascii
+        if word.contains(|c| !char::is_ascii(&c)) {
+            continue;
+        }
         match twords.get_mut(&word) {
             Some(c) => *c += 1,
             None => {
