@@ -60,8 +60,18 @@ fn main() {
 fn pipe_posts(postings: &mut Postings, fposts: &mut BufWriter<File>) {
     for post in &postings.posts {
         fposts
-            // TODO: atoi
-            .write(format!("{} {} {}\n", post.word, post.count, post.docid).as_bytes())
+            .write(
+                [
+                    post.word.as_bytes(),
+                    " ".as_bytes(),
+                    &post.docid.to_le_bytes(),
+                    " ".as_bytes(),
+                    &post.count.to_le_bytes(),
+                    "\n".as_bytes(),
+                ]
+                .concat()
+                .as_ref(),
+            )
             .unwrap();
     }
     postings.posts.clear();
@@ -121,7 +131,7 @@ fn parse(
     docs.set_length(docid, doc_count);
     for (word, count) in twords.into_iter() {
         words.add(&word, count);
-        postings.add(word, count, docid);
+        postings.add(word, count, docid as u32);
     }
 }
 
@@ -175,13 +185,13 @@ impl Postings {
         Self { posts: Vec::new() }
     }
 
-    fn add(&mut self, word: String, count: u32, docid: usize) {
+    fn add(&mut self, word: String, count: u32, docid: u32) {
         self.posts.push(Posting { word, docid, count });
     }
 }
 
 struct Posting {
     word: String,
-    docid: usize,
+    docid: u32,
     count: u32,
 }
