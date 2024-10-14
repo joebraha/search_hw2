@@ -26,7 +26,7 @@ fn main() {
         let (docid, line) = insert_doc(line, &mut docs);
         parse(line, &mut docs, &mut postings, &mut words, docid);
         count += 1;
-        if count > 10000 {
+        if count > 1000000 {
             println!(
                 "words: {}, docs: {}, posts: {}, time: {}s",
                 words.words.keys().len(),
@@ -60,18 +60,7 @@ fn main() {
 fn pipe_posts(postings: &mut Postings, fposts: &mut BufWriter<File>) {
     for post in &postings.posts {
         fposts
-            .write(
-                [
-                    post.word.as_bytes(),
-                    " ".as_bytes(),
-                    &post.docid.to_le_bytes(),
-                    " ".as_bytes(),
-                    &post.count.to_le_bytes(),
-                    "\n".as_bytes(),
-                ]
-                .concat()
-                .as_ref(),
-            )
+            .write(format!("{} {} {}\n", post.word, post.docid, post.count).as_bytes())
             .unwrap();
     }
     postings.posts.clear();
@@ -119,6 +108,10 @@ fn parse(
         doc_count += 1;
         // skip non ascii
         if word.contains(|c| !char::is_ascii(&c)) {
+            continue;
+        }
+        // attempt to skip empty words
+        if !word.contains(|c| c >= 'a' && c <= 'z') {
             continue;
         }
         match twords.get_mut(&word) {
