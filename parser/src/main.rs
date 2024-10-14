@@ -98,8 +98,6 @@ fn parse(
 ) {
     // replaced delimiters with is_ascii_punctuation. More aggressive parse, which should result in
     // better real english words, at the (acceptable) expense of tokenizing ranodm words (math etc.)
-    // let delimiters = [',', '.', ';', ':', '\'', '"', '?', '!'];
-    // TODO: do this in place to save time
     let line = line.split(|c| char::is_whitespace(c) || char::is_ascii_punctuation(&c));
     let mut twords = HashMap::new();
     let mut doc_count = 0;
@@ -110,6 +108,8 @@ fn parse(
         if word.contains(|c| !char::is_ascii(&c)) {
             continue;
         }
+        // remove all non-ascii, to aggresively target normal English words
+        let word: String = word.chars().filter(|&c| c >= 'a' && c <= 'z').collect();
         // attempt to skip empty words
         if !word.contains(|c| c >= 'a' && c <= 'z') {
             continue;
