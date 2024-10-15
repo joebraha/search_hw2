@@ -14,6 +14,7 @@ typedef struct {
 
 typedef struct {
     char term[MAX_WORD_SIZE];
+    int count;
     size_t block_index;
     size_t offset;
     size_t last_did_block;  // the block number where the last did resides
@@ -131,8 +132,9 @@ void create_inverted_index() {
             if (docids->size > 0 && frequencies->size > 0) {
                 // Update last_did_offset for the current term before writing to
                 // blocks
-                lexicon[lexicon_size - 1].last_did_offset = docids->size;
-                lexicon[lexicon_size - 1].last_did_block = current_block_number;
+                lexicon[lexicon_size].last_did_offset = docids->size;
+                lexicon[lexicon_size].last_did_block = current_block_number;
+                lexicon_size++;
             }
 
             // update current word
@@ -149,7 +151,6 @@ void create_inverted_index() {
             strcpy(lexicon[lexicon_size].term, word);
             lexicon[lexicon_size].block_index = current_block_number;
             lexicon[lexicon_size].offset = docids->size;
-            lexicon_size++;
         }
 
         if (docids->size >= BLOCK_SIZE) {
@@ -161,6 +162,8 @@ void create_inverted_index() {
         // not a new term, so add to existing postings list
         docids->data[docids->size++] = doc_id;
         frequencies->data[frequencies->size++] = count;
+        // add total word counts to lexicon
+        lexicon[lexicon_size].count += count;
 
         // // compress count
         // size_t compressed_size = varbyte_encode(count, compressed_data);
@@ -194,6 +197,20 @@ void create_inverted_index() {
 
     // Write remaining blocks to file
     pipe_to_file(blocks, findex);
+
+    // pipe out lexicon
+    FILE *flexi = fopen("lexicon_out", "wb");
+    if (!flexi) {
+        perror("Error opening lexicon_out");
+        exit(EXIT_FAILURE);
+    }
+    for (int i = 0; i < lexicon_size; i++) {
+        LexiconEntry *l = lexicon + i;
+        fprintf(flexi, "%s %d %zu %zu %zu %zu", l->term, l->count,
+                l->block_index, l->offset, l->last_did_block,
+                l->last_did_offset);
+    }
+    fclose(flexi);
 
     // close files
     fclose(fsorted_posts);
