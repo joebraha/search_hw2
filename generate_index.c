@@ -30,7 +30,6 @@ typedef struct {
 // this function opens the final index file, writes the blocks to the file,
 // and resets the block size of each block
 void pipe_to_file(CompressedData *blocks, FILE *file) {
-    printf("pipe_to_file\n");
     fwrite(blocks->data, 1, blocks->size, file);
     blocks->size = 0;
 }
@@ -49,7 +48,6 @@ CompressedData *compress_block(MemoryBlock *block) {
 // to the blocks array, updating the offset and block number as needed.
 void add_to_index(MemoryBlock *block, int *current_block_number,
                   CompressedData *blocks, FILE *file) {
-    printf("add_to_index, block: %d\n", *current_block_number);
     // compress block
     CompressedData *compressed = compress_block(block);
     // write buffer of compressed data to disk if need be
@@ -117,13 +115,10 @@ void create_inverted_index() {
         calloc(MAX_WORD_SIZE, sizeof(char));          // Zero out with calloc
     char *word = calloc(MAX_WORD_SIZE, sizeof(char)); // Zero out with calloc
     int count, doc_id;
-    int last_doc_id = -1;
 
     unsigned char compressed_data[10]; // Buffer for compressed data
 
     while (fscanf(fsorted_posts, "%s %d %d\n", word, &count, &doc_id) != EOF) {
-        // printf("here\n");
-        printf("%s %d %d\n", word, doc_id, count);
         if (strcmp(current_term, word) != 0) {
             // encountering first term or next term- need to write the current
             // term's data to blocks
@@ -223,11 +218,11 @@ void create_inverted_index() {
     // free buffers and blocks
     free(current_term);
     free(word);
+    free(frequencies->data);
     free(frequencies);
+    free(docids->data);
     free(docids);
-    for (size_t i = 0; i < INDEX_MEMORY_SIZE; i++) {
-        free(blocks[i].data);
-    }
+    free(blocks->data);
     free(blocks);
     for (size_t i = 0; i < lexicon_size; i++) {
         free(lexicon[i].term);
