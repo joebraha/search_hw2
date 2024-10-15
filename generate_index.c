@@ -13,7 +13,7 @@ typedef struct {
 } MemoryBlock;
 
 typedef struct {
-    char term[MAX_WORD_SIZE];
+    char *term;
     int count;
     size_t block_index;
     size_t offset;
@@ -109,9 +109,7 @@ void create_inverted_index() {
 
     // Initial allocation for lexicon
     size_t lexicon_capacity =
-        1000; // Initial size of lexicon- real size more like 1 mil probably?
-              // need to check but can't bc current word list contains
-              // duplicates
+        1300000; // a bit more than the real size (1224087)
     LexiconEntry *lexicon = malloc(lexicon_capacity * sizeof(LexiconEntry));
     size_t lexicon_size = 0;
 
@@ -148,6 +146,7 @@ void create_inverted_index() {
             }
 
             // add lexicon entry for new term
+            lexicon[lexicon_size].term = malloc(MAX_WORD_SIZE);
             strcpy(lexicon[lexicon_size].term, word);
             lexicon[lexicon_size].block_index = current_block_number;
             lexicon[lexicon_size].offset = docids->size;
@@ -189,7 +188,12 @@ void create_inverted_index() {
         // docids_size += compressed_size;
     }
 
-    // check if there is any data left to write from the last line in the file
+    // finished - fill in lexicon for last value
+    lexicon[lexicon_size].last_did_offset = docids->size;
+    lexicon[lexicon_size].last_did_block = current_block_number;
+    lexicon_size++;
+
+    // write the last blocks to the index
     if (frequencies->size > 0 && docids->size > 0) {
         add_to_index(docids, &current_block_number, blocks, findex);
         add_to_index(frequencies, &current_block_number, blocks, findex);
@@ -204,11 +208,11 @@ void create_inverted_index() {
         perror("Error opening lexicon_out");
         exit(EXIT_FAILURE);
     }
-    for (int i = 0; i < lexicon_size; i++) {
-        LexiconEntry *l = lexicon + i;
-        fprintf(flexi, "%s %d %zu %zu %zu %zu", l->term, l->count,
-                l->block_index, l->offset, l->last_did_block,
-                l->last_did_offset);
+    for (size_t i = 0; i < lexicon_size; i++) {
+        LexiconEntry l = lexicon[i];
+        // note: count is actually the frequency - 1
+        fprintf(flexi, "%s %d %zu %zu %zu %zu\n", l.term, l.count,
+                l.block_index, l.offset, l.last_did_block, l.last_did_offset);
     }
     fclose(flexi);
 
