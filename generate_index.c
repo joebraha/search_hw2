@@ -9,7 +9,7 @@
 
 typedef struct {
     size_t size;
-    unsigned char *data; // Using unsigned char for byte-level operations
+    int *data; // Using unsigned char for byte-level operations
 } MemoryBlock;
 
 typedef struct {
@@ -24,7 +24,7 @@ typedef struct {
 
 typedef struct {
     size_t size;
-    unsigned char *data;
+    int *data;
 } CompressedData;
 
 // this function opens the final index file, writes the blocks to the file,
@@ -37,9 +37,9 @@ void pipe_to_file(CompressedData *blocks, FILE *file) {
 
 // TODO: this
 CompressedData *compress_block(MemoryBlock *block) {
-    CompressedData *c;
+    CompressedData *c = malloc(sizeof(CompressedData));
     c->size = block->size;
-    c->data = block->data;
+    c->data = block->data; // note that this rn doesn't copy the data
     return c;
 }
 
@@ -53,7 +53,7 @@ void add_to_index(MemoryBlock *block, int *current_block_number,
     // compress block
     CompressedData *compressed = compress_block(block);
     // write buffer of compressed data to disk if need be
-    if (blocks->size + compressed->size > INDEX_MEMORY_SIZE) {
+    if (blocks->size + compressed->size > INDEX_MEMORY_SIZE / sizeof(int)) {
         pipe_to_file(blocks, file);
     }
     // add to buffer of compressed data
