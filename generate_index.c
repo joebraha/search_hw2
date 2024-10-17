@@ -9,7 +9,7 @@
 
 typedef struct {
     size_t size;
-    int *data; // Using unsigned char for byte-level operations
+    unsigned char *data; // Using unsigned char for byte-level operations
 } MemoryBlock;
 
 typedef struct {
@@ -18,45 +18,52 @@ typedef struct {
     size_t block_index;
     size_t offset;
     size_t last_did_block;  // the block number where the last did resides
+    int last_did;           // the last docID in the block
     size_t last_did_offset; // Offset within the block where the last docID is
                             // stored
 } LexiconEntry;
 
+
 typedef struct {
     size_t size;
-    int *data;
+    unsigned char *data;
 } CompressedData;
 
 // this function opens the final index file, writes the blocks to the file,
 // and resets the block size of each block
+// *** added in some additional error handling
 void pipe_to_file(CompressedData *blocks, FILE *file) {
-    fwrite(blocks->data, 1, blocks->size, file);
+    // Ensure the file is open
+    if (!file) {
+        perror("Error: File is not open");
+        return;
+    }
+
+    // Write the data to the file
+    size_t written = fwrite(blocks->data, 1, blocks->size, file);
+    if (written != blocks->size) {
+        perror("Error writing blocks to file");
+        // Handle the error appropriately, e.g., by exiting or returning an error code
+        exit(EXIT_FAILURE);
+    }
+
+    // Reset the blocks size
     blocks->size = 0;
 }
 
-// TODO: this
-CompressedData *compress_block(MemoryBlock *block) {
-    CompressedData *c = malloc(sizeof(CompressedData));
-    c->size = block->size;
-    c->data = block->data; // note that this rn doesn't copy the data
-    return c;
-}
 
-// v2 - this function takes in a buffer containing compressed frequency or docid
-// data, the size of the buffer, the offset in the block to start writing to,
-// the current block number, and the array of MemoryBlocks. It writes the buffer
-// to the blocks array, updating the offset and block number as needed.
 void add_to_index(MemoryBlock *block, int *current_block_number,
                   CompressedData *blocks, FILE *file) {
-    // compress block
-    CompressedData *compressed = compress_block(block);
-    // write buffer of compressed data to disk if need be
-    if (blocks->size + compressed->size > INDEX_MEMORY_SIZE / sizeof(int)) {
+
+    // *** the block coming in now should already be compressed
+    // write blocks of compressed data to disk if need be
+    if (blocks->size + block->size > INDEX_MEMORY_SIZE) {
+        printf("\tBlocks in main memory full, writing blocks to file\n");
         pipe_to_file(blocks, file);
     }
-    // add to buffer of compressed data
-    memcpy(blocks->data + blocks->size, compressed->data, compressed->size);
-    blocks->size += compressed->size;
+    // add compressed block data to blocks
+    memcpy(blocks->data + blocks->size, block->data, block->size);
+    blocks->size += block->size;
     // clear out block
     block->size = 0;
 
@@ -81,6 +88,9 @@ void create_inverted_index() {
         perror("Error opening sorted_posts.txt");
         exit(EXIT_FAILURE);
     }
+    else {
+        printf("Opened sorted_posts.txt\n");
+    }
 
     // create index file
     FILE *findex = fopen("final_index.dat", "wb");
@@ -89,44 +99,90 @@ void create_inverted_index() {
         fclose(fsorted_posts);
         exit(EXIT_FAILURE);
     }
+    else {
+        printf("Opened final_index.dat\n");
+    }
 
     // Allocate memory for blocks array- this will hold all the compressed
     // blocks we can fill before piping to file
     CompressedData *blocks = malloc(sizeof(CompressedData));
-    blocks->data = malloc(INDEX_MEMORY_SIZE);
+    if (!blocks) {
+        perror("Error allocating memory for blocks");
+        exit(EXIT_FAILURE);
+    }
+    blocks->data = calloc(INDEX_MEMORY_SIZE, sizeof(unsigned char)); // Corrected allocation // *** changed to calloc to zero out so we don't have to pad with zeros if need be
+    if (!blocks->data) {
+        perror("Error allocating memory for blocks->data");
+        exit(EXIT_FAILURE);
+    }
+    blocks->size = 0;
 
-    // Temporary buffers for docids and frequencies
-    // keep track of their sizes and capacities so we can reallocate more space
-    // as necessary
+    // Temporary buffers for docids and frequencies to go into one block
     MemoryBlock *docids = malloc(sizeof(MemoryBlock));
+    if (!docids) {
+        perror("Error allocating memory for docids");
+        exit(EXIT_FAILURE);
+    }
     docids->data = malloc(BLOCK_SIZE);
+    if (!docids->data) {
+        perror("Error allocating memory for docids->data");
+        exit(EXIT_FAILURE);
+    }
+    docids->size = 0;
+
     MemoryBlock *frequencies = malloc(sizeof(MemoryBlock));
-    frequencies->data = malloc(BLOCK_SIZE);
+    if (!frequencies) {
+        perror("Error allocating memory for frequencies");
+        exit(EXIT_FAILURE);
+    }
+    frequencies->data = malloc(BLOCK_SIZE); 
+    if (!frequencies->data) {
+        perror("Error allocating memory for frequencies->data");
+        exit(EXIT_FAILURE);
+    }
+    frequencies->size = 0;
 
     int current_block_number = 0;
+
 
     // Initial allocation for lexicon
     size_t lexicon_capacity =
         1300000; // a bit more than the real size (1224087)
     LexiconEntry *lexicon = malloc(lexicon_capacity * sizeof(LexiconEntry));
+    if (!lexicon) {
+        perror("Error allocating memory for lexicon");
+        exit(EXIT_FAILURE);
+    }
     size_t lexicon_size = 0;
 
     char *current_term =
         calloc(MAX_WORD_SIZE, sizeof(char));          // Zero out with calloc
+    if (!current_term) {
+        perror("Error allocating memory for current_term");
+        exit(EXIT_FAILURE);
+    }
     char *word = calloc(MAX_WORD_SIZE, sizeof(char)); // Zero out with calloc
+    if (!word) {
+        perror("Error allocating memory for word");
+        exit(EXIT_FAILURE);
+    }
     int count, doc_id;
+    int last_doc_id = -1;
 
-    unsigned char compressed_data[10]; // Buffer for compressed data
+    unsigned char compressed_data[10];
+
+    printf("Allocated memory for blocks, docids, and frequencies\n");
+    printf("Starting to read sorted_posts.txt\n");
 
     while (fscanf(fsorted_posts, "%s %d %d\n", word, &count, &doc_id) != EOF) {
         if (strcmp(current_term, word) != 0) {
-            // encountering first term or next term- need to write the current
-            // term's data to blocks
+            // encountering first term or next term-
             if (docids->size > 0 && frequencies->size > 0) {
                 // Update last_did_offset for the current term before writing to
                 // blocks
                 lexicon[lexicon_size].last_did_offset = docids->size;
                 lexicon[lexicon_size].last_did_block = current_block_number;
+                lexicon[lexicon_size].last_did = last_doc_id; // Add last_doc_id to lexicon entry ***
                 lexicon_size++;
             }
 
@@ -147,45 +203,38 @@ void create_inverted_index() {
             lexicon[lexicon_size].offset = docids->size;
         }
 
-        if (docids->size >= BLOCK_SIZE) {
-            // compress and write to block
+        // moving check to before you add to the docids block, to prevent memory errors
+        // if we tried to add a docid to an already full block, could result in seg fault ***
+        // if (docids->size >= BLOCK_SIZE) {
+        //     // 
+        //     add_to_index(docids, &current_block_number, blocks, findex);
+        //     add_to_index(frequencies, &current_block_number, blocks, findex);
+        // }
+
+        // not a new term, so add to existing postings list
+        // compress doc_id and add to docids
+        size_t compressed_size = varbyte_encode(doc_id, compressed_data);
+        if (docids->size + compressed_size > BLOCK_SIZE) {
+            printf("docids block is full, writing docids and frequencies to index\n");
+            // doc ids block is full, write docids and freqs to index
             add_to_index(docids, &current_block_number, blocks, findex);
             add_to_index(frequencies, &current_block_number, blocks, findex);
         }
+        memcpy(docids->data + docids->size, compressed_data, compressed_size);
+        docids->size += compressed_size;
 
-        // not a new term, so add to existing postings list
-        docids->data[docids->size++] = doc_id;
-        frequencies->data[frequencies->size++] = count;
+        // compress count and add to frequencies
+        compressed_size = varbyte_encode(count, compressed_data);
+        memcpy(frequencies->data + frequencies->size, compressed_data,
+               compressed_size);
         // add total word counts to lexicon
         lexicon[lexicon_size].count += count;
-
-        // // compress count
-        // size_t compressed_size = varbyte_encode(count, compressed_data);
-        // // check if we need to reallocate memory for frequencies buffer
-        // if (frequencies_size + compressed_size > frequencies_capacity) {
-        //     frequencies_capacity *= 2;
-        //     frequencies = realloc(frequencies, frequencies_capacity);
-        // }
-        // // add compressed count to frequencies buffer
-        // memcpy(frequencies + frequencies_size, compressed_data,
-        //        compressed_size);
-        // frequencies_size += compressed_size;
-        //
-        // // compress doc_id
-        // compressed_size = varbyte_encode(doc_id, compressed_data);
-        // // check if we need to reallocate memory for docids buffer
-        // if (docids_size + compressed_size > docids_capacity) {
-        //     docids_capacity *= 2;
-        //     docids = realloc(docids, docids_capacity);
-        // }
-        // // add compressed doc_id to docids buffer
-        // memcpy(docids + docids_size, compressed_data, compressed_size);
-        // docids_size += compressed_size;
     }
 
-    // finished - fill in lexicon for last value
+    // finished - fill in lexicon for last value 
     lexicon[lexicon_size].last_did_offset = docids->size;
     lexicon[lexicon_size].last_did_block = current_block_number;
+    lexicon[lexicon_size].last_did = last_doc_id; // Add last_doc_id to lexicon entry
     lexicon_size++;
 
     // write the last blocks to the index
@@ -205,9 +254,9 @@ void create_inverted_index() {
     }
     for (size_t i = 0; i < lexicon_size; i++) {
         LexiconEntry l = lexicon[i];
-        // note: count is actually the frequency - 1
-        fprintf(flexi, "%s %d %zu %zu %zu %zu\n", l.term, l.count,
-                l.block_index, l.offset, l.last_did_block, l.last_did_offset);
+        // note: count is actually the frequency - 1 *** why?
+        fprintf(flexi, "%s %d %zu %zu %zu %d %zu\n", l.term, l.count,
+                l.block_index, l.offset, l.last_did_block, l.last_did, l.last_did_offset);
     }
     fclose(flexi);
 
@@ -237,19 +286,3 @@ int main() {
 
     return 0;
 }
-
-// QUESTIONS
-// what does the doc table actually do? currently not implemented
-// what does the word table do here that isn't currently done by the creation of
-// the lexicon? do we need to keep track of the total frequency of a word in the
-// lexicon? how did we decide on 128MB for the index memory size? should we do
-// the merge sort before we even run this whole program just to see if it works?
-
-// POTENTIAL OPTIMIZATIONS
-// initial capacities for buffers and the lexicon are arbitrary, consider using
-// more adaptive strategies for resizing? how to pick? add more error checking
-// for malloc and realloc calls pass in file names as arguments to the program
-// PIPE OUT LEXICON TO A SEPARATE FILE !!! NOT IMPLEMENTED YET
-// think about doing merge sort outside of the program
-// abstract out parts of massive build index function so it's more readable and
-// less of an eyesore
