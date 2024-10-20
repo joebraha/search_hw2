@@ -51,7 +51,6 @@ fn main() {
         postings.posts.len()
     );
 
-    // TODO: threading
     pipe_posts(&mut postings, &mut fposts);
     pipe_docs(&mut docs, &mut fdocs);
     pipe_words(&mut words, &mut fwords);
@@ -138,7 +137,6 @@ impl DocTable {
         return DocTable { docs: Vec::new() };
     }
 
-    // TODO: convert from usize to normal int type
     fn add(&mut self, doc: String) -> usize {
         self.docs.push((doc, 0));
         return self.docs.len() - 1;
