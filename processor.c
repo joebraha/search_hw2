@@ -5,6 +5,9 @@
 
 #define MAX_WORD_SIZE (size_t)190
 #define MAX_TERMS 20
+#define BLOCK_SIZE (size_t)65536 // 64KB
+#define MAX_BLOCKS 1000 // Maximum number of blocks for one term- need to check this
+
 
 // Define constants for search modes
 #define CONJUNCTIVE 1
@@ -21,11 +24,15 @@ void parse_term(char *term);
 typedef struct {
     char term[MAX_WORD_SIZE];
     int count;
-    size_t block_index;
-    size_t offset;
-    size_t last_did_block;
+    int start_d_block;
+    size_t start_d_offset;
+    size_t start_f_offset;
+    int last_d_block;
+    size_t last_d_offset;
+    size_t last_f_offset;
     int last_did;
-    size_t last_did_offset;
+    int *last;
+    size_t num_blocks; // Number of blocks
     UT_hash_handle hh; // Hash handle for uthash
 } LexiconEntry;
 
@@ -34,42 +41,88 @@ LexiconEntry *lexicon_table = NULL;
 
 typedef struct {
     char term[MAX_WORD_SIZE];
-    size_t block_index;
-    size_t offset;
-    size_t last_did_block;
+    int count;
+    int start_d_block;
+    size_t start_d_offset;
+    size_t start_f_offset;
+    int last_d_block;
+    size_t last_d_offset;
+    size_t last_f_offset;
     int last_did;
-    size_t last_did_offset;
-    unsigned char *compressed_list;
-    size_t compressed_list_size;
+    int *last;
+    size_t num_blocks; // Number of blocks
+    unsigned char *compressed_d_list;
+    unsigned char *compressed_f_list;
+    // size_t compressed_list_size;
 } PostingsList;
 
 // get postings list from index file for each term in query
-// *** NOT DONE - I don't think this would actually fetch the frequencies- need to adjust 
 void retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *postings_lists) {
     for (size_t i = 0; i < num_terms; i++) {
+        // retrieving postings list for term i
         LexiconEntry *metadata = get_metadata(terms[i]);
         if (metadata) {
-            // Seek to the starting block in the index file
-            fseek(index, metadata->block_index, SEEK_SET);
+            size_t d_start = metadata->start_d_offset; // the start offset to be updated as we move through blocks
+            size_t f_start = metadata->start_f_offset; // same but for frequency blocks 
 
-            // Read the compressed postings list
-            size_t compressed_list_size = metadata->last_did_offset - metadata->offset;
-            unsigned char *compressed_list = (unsigned char *)malloc(compressed_list_size);
-            if (!compressed_list) {
-                perror("Error allocating memory for compressed list");
+            // allocating memory for compressed data
+            postings_lists[i].compressed_d_list = malloc(BLOCK_SIZE * metadata->num_blocks);
+            postings_lists[i].compressed_f_list = malloc(BLOCK_SIZE * metadata->num_blocks);
+            if (!postings_lists[i].compressed_d_list || !postings_lists[i].compressed_f_list) {
+                perror("Error allocating memory for compressed lists");
                 exit(EXIT_FAILURE);
             }
-            fread(compressed_list, 1, compressed_list_size, index);
+
+            // to keep track of where we are writing to in postings_lists[i].compressed_<d or f>_list
+            size_t d_offset = 0;
+            size_t f_offset = 0;
+
+
+            for (int d = metadata->start_d_block; d <= metadata->last_d_block; d+=2) {
+                // read in the docids and frequencies
+                int f = d + 1; // frequencies always stored in block after docids
+                size_t d_block_offset = (d * BLOCK_SIZE) + d_start; // actual location to seek to 
+                size_t f_block_offset = (f * BLOCK_SIZE) + f_start;
+                if (d != metadata->last_d_block) {
+                    // not the last block, read in from the offset to the end of the block 
+                    fseek(index, d_block_offset, SEEK_SET);
+                    fread((postings_lists[i].compressed_d_list + d_offset), 1, (BLOCK_SIZE - d_start), index);
+                    d_offset += (BLOCK_SIZE - d_start); // incrementing by size of what we just added in 
+                    d_start = 0; // reset start offset for next block
+
+                    fseek(index, f_block_offset, SEEK_SET);
+                    fread((postings_lists[i].compressed_f_list + f_offset), 1, (BLOCK_SIZE - f_start), index);
+                    f_offset += (BLOCK_SIZE - f_start); // incrementing like above
+                    f_start = 0; // reset start offset for next block
+                } else {
+                    // last or only block- only read in from start offset to last offset
+                    fseek(index, d_block_offset, SEEK_SET);
+                    fread((postings_lists[i].compressed_d_list + d_offset), 1, metadata->last_d_offset - d_start, index);
+
+                    fseek(index, f_offset, SEEK_SET);  
+                    fread((postings_lists[i].compressed_f_list + f_offset), 1, metadata->last_f_offset - f_start, index);
+                }
+            }
 
             // Store the postings list and metadata
             strcpy(postings_lists[i].term, terms[i]);
-            postings_lists[i].block_index = metadata->block_index;
-            postings_lists[i].offset = metadata->offset;
-            postings_lists[i].last_did_block = metadata->last_did_block;
+            postings_lists[i].count = metadata->count;
+            postings_lists[i].start_d_block = metadata->start_d_block;
+            postings_lists[i].start_d_offset = metadata->start_d_offset;
+            postings_lists[i].start_f_offset = metadata->start_f_offset;
+            postings_lists[i].last_d_block = metadata->last_d_block;
+            postings_lists[i].last_d_offset = metadata->last_d_offset;
+            postings_lists[i].last_f_offset = metadata->last_f_offset;
             postings_lists[i].last_did = metadata->last_did;
-            postings_lists[i].last_did_offset = metadata->last_did_offset;
-            postings_lists[i].compressed_list = compressed_list;
-            postings_lists[i].compressed_list_size = compressed_list_size;
+            
+            // Copy the last array
+            postings_lists[i].last = malloc(sizeof(int) * metadata->num_blocks);
+            if (!postings_lists[i].last) {
+                perror("Error allocating memory for last array");
+                exit(EXIT_FAILURE);
+            }
+            memcpy(postings_lists[i].last, metadata->last, sizeof(int) * metadata->num_blocks);
+            postings_lists[i].num_blocks = metadata->num_blocks;
         } else {
             printf("Term '%s' not found in lexicon\n", terms[i]);
         }
@@ -77,6 +130,7 @@ void retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *posti
 }
 
 // IMPLEMENT DAAT TRAVERSAL AND ASSOCIATED FUNCTIONS 
+DAAT(postings_lists, num_terms)
 
 // function to retrieve metadata from lexicon
 LexiconEntry *get_metadata(const char *term) {
@@ -93,10 +147,12 @@ void load_lexicon(const char *filename) {
     }
 
     char term[MAX_WORD_SIZE];
-    int count, last_did;
-    size_t block_index, offset, last_did_block, last_did_offset;
+    int count, last_did, start_d_block, last_d_block;
+    int *last = malloc(sizeof(int) * MAX_BLOCKS);
 
-    while (fscanf(file, "%s %d %zu %zu %zu %d %zu\n", term, &count, &block_index, &offset, &last_did_block, &last_did, &last_did_offset) != EOF) {
+    size_t start_d_offset, start_f_offset, last_f_offset, last_d_offset;
+
+    while (fscanf(file, "%s %d %d %zu %zu %d %zu %zu %d", term, &count, &start_d_block, &start_d_offset, &start_f_offset, &last_d_block, &last_d_offset, &last_f_offset, &last_did) == 9) {
         LexiconEntry *entry = (LexiconEntry *)malloc(sizeof(LexiconEntry));
         if (!entry) {
             perror("Error allocating memory for lexicon entry");
@@ -104,12 +160,37 @@ void load_lexicon(const char *filename) {
         }
         strcpy(entry->term, term);
         entry->count = count;
-        entry->block_index = block_index;
-        entry->offset = offset;
+        entry->start_d_block = start_d_block;
+        entry->start_d_offset = start_d_offset;
+        entry->start_f_offset = start_f_offset;
+        entry->last_d_block = last_d_block;
+        entry->last_d_offset = last_d_offset;
+        entry->last_f_offset = last_f_offset;
         entry->last_did = last_did;
-        entry->last_did_block = last_did_block;
-        entry->last_did_offset = last_did_offset;
-        HASH_ADD_STR(lexicon_table, term, entry); // Add entry to hash table
+
+        // Read the variable part (last array)
+        entry->last = (int *)malloc(sizeof(int) * MAX_BLOCKS);
+        if (!entry->last) {
+            perror("Error allocating memory for last array");
+            free(entry);
+            exit(EXIT_FAILURE);
+        }
+
+        entry->num_blocks = 0;
+        int prev_value = -1; // Initialize to a value that is less than any valid docID
+        while (fscanf(file, "%d", &entry->last[entry->num_blocks]) == 1) {
+            if (entry->last[entry->num_blocks] <= prev_value) {
+                break; // Stop if the current value is not greater than the previous value- last array is only increasing
+            }
+            prev_value = entry->last[entry->num_blocks];
+            entry->num_blocks++;
+            if (entry->num_blocks >= MAX_BLOCKS) {
+                break;
+            }
+        }
+
+        // Add the entry to the hash table
+        HASH_ADD_STR(lexicon_table, term, entry);
     }
 
     fclose(file);
@@ -189,6 +270,8 @@ int main(int argc, char *argv[]) {
         // Perform DAAT traversal - HAVENT TOUCHED THIS YET
         // need to create heap for storing top 10 results
         // need to implement open_list, close_list, nextGEQ, and get_score functions to do DAAT
+        // initialize top-10 heap
+        
         DAAT(postings_lists, num_terms);
 
         // Free allocated memory for terms and postings lists

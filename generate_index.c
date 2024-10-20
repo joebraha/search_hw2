@@ -6,6 +6,7 @@
 #define BLOCK_SIZE (size_t)65536 // 64KB
 #define MAX_WORD_SIZE (size_t)190
 #define INDEX_MEMORY_SIZE (size_t)(128 * 1024 * 1024) // 128MB
+#define MAX_BLOCKS 1000 // Maximum number of blocks for one term- need to check this
 
 typedef struct {
     size_t size;
@@ -15,12 +16,15 @@ typedef struct {
 typedef struct {
     char *term;
     int count;
-    int block_index;
-    size_t offset;
-    int last_did_block;  // the block number where the last did resides
+    int start_d_block; // The block number where the first did resides
+    size_t start_d_offset; // Offset within the block where the first docID is stored
+    size_t start_f_offset; // Offset within the block where the first frequency is stored
+    int last_d_block;  // the block number where the last did resides
+    size_t last_d_offset; // Offset within the block where the last docID is stored
+    size_t last_f_offset; // Offset within the block where the last frequency is stored
     int last_did;           // the last docID in the block
-    size_t last_did_offset; // Offset within the block where the last docID is
-                            // stored
+    int *last; // Array to store the last docID in each block
+    size_t num_blocks; // Number of d blocks that the term's posting list spans
 } LexiconEntry;
 
 
@@ -80,6 +84,45 @@ size_t varbyte_encode(int value, unsigned char *output) {
     output[i++] = value & 127;
     return i;
 }
+
+void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id, int count, 
+                    int *current_block_number, CompressedData *blocks, FILE *findex, LexiconEntry *current_entry) {
+    size_t compressed_doc_size;
+    size_t compressed_freq_size;
+
+    unsigned char compressed_doc_data[10];
+    unsigned char compressed_freq_data[10];
+
+    // compress doc_id and add to docids
+    // printf("Compressing doc_id=%d\n", current_posting_did);
+    compressed_doc_size = varbyte_encode(doc_id, compressed_doc_data);
+    // printf("Compressing count=%d\n", current_posting_count);
+    // compress count and add to frequencies
+    compressed_freq_size = varbyte_encode(count, compressed_freq_data);
+
+    // printf("Checking size of docs and freqs\n");
+    if ((docids->size + compressed_doc_size > BLOCK_SIZE) || (frequencies->size + compressed_freq_size > BLOCK_SIZE)) {
+        // printf("docids or freqs block is full, adding docids to index\n");
+        
+        add_to_index(docids, current_block_number, blocks, findex);
+        // printf("now adding frequencies to index\n");
+        add_to_index(frequencies, current_block_number, blocks, findex);
+        current_entry->num_blocks++;
+    }
+
+    // printf("Adding compressed doc_id to docids\n");
+    memcpy(docids->data + docids->size, compressed_doc_data, compressed_doc_size);
+    docids->size += compressed_doc_size;
+
+    // printf("Adding count to frequencies\n");
+    memcpy(frequencies->data + frequencies->size, compressed_freq_data, compressed_freq_size);
+    frequencies->size += compressed_freq_size;
+
+    // Add the last inserted docID to the last array
+    current_entry->last[current_entry->num_blocks] = doc_id;
+
+}
+
 
 void create_inverted_index(const char *sorted_file_path) {
     // open sorted file
@@ -169,11 +212,6 @@ void create_inverted_index(const char *sorted_file_path) {
     int current_posting_did = -1;
     int current_posting_count = 0;
 
-    size_t compressed_doc_size;
-    size_t compressed_freq_size;
-
-    unsigned char compressed_doc_data[10];
-    unsigned char compressed_freq_data[10];
 
     // Initialize current_entry
     LexiconEntry current_entry;
@@ -187,16 +225,26 @@ void create_inverted_index(const char *sorted_file_path) {
         if (strcmp(current_term, word) != 0) {
             // printf("Encountering new term- current term is %s, word is %s\n", current_term, word);
             if (current_entry.term != NULL && current_entry.term[0] != '\0') {
-                // printf("Current entry term is not NULL or empty\n");
-                // encountering next term - need to write the current term's data to blocks
-                current_entry.last_did_offset = docids->size;
-                current_entry.last_did_block = current_block_number;
+                // printf("Inserting last posting from last postings list\n");
+                // encountering next term - need to write last posting in last posting list to dids and freqs
+                insert_posting(docids, frequencies, current_posting_did, current_posting_count, &current_block_number, blocks, findex, &current_entry);
+                // printf("last docid in last block: %d\n", current_entry.last[current_entry.num_blocks]);
+                current_entry.last_d_offset = docids->size;
+                current_entry.last_f_offset = frequencies->size;
+                current_entry.last_d_block = current_block_number;
                 current_entry.last_did = last_doc_id;
+
                 // printf("Writing current_entry %s to lexicon_out\n", current_entry.term);
-                fprintf(flexi, "%s %d %d %zu %d %d %zu\n", current_entry.term, current_entry.count,
-                    current_entry.block_index, current_entry.offset, current_entry.last_did_block, current_entry.last_did, current_entry.last_did_offset);
-                // printf("Wrote current_entry to lexicon_out\n");
+                fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d", current_entry.term, current_entry.count,
+                    current_entry.start_d_block, current_entry.start_d_offset, current_entry.start_f_offset,
+                    current_entry.last_d_block, current_entry.last_d_offset, current_entry.last_f_offset,
+                    current_entry.last_did);
+                for (size_t i = 0; i <= current_entry.num_blocks; i++) {
+                    fprintf(flexi, " %d", current_entry.last[i]);
+                }
+                fprintf(flexi, "\n");
                 free(current_entry.term);
+                free(current_entry.last); // Free the memory allocated for the last array
                 // printf("Freed current_entry.term\n");
             }
             // update current posting list's term
@@ -211,9 +259,14 @@ void create_inverted_index(const char *sorted_file_path) {
 
             memset(&current_entry, 0, sizeof(LexiconEntry)); // Zero out the memory of current_entry
             current_entry.term = strdup(word); 
-            current_entry.block_index = current_block_number;
-            current_entry.offset = docids->size;
+            current_entry.start_d_block = current_block_number;
+            current_entry.start_d_offset = docids->size;
+            current_entry.start_f_offset = frequencies->size;
             current_entry.count = 0; // Initialize count
+
+            // Initialize the last array and num_blocks
+            current_entry.last = malloc(sizeof(int) * MAX_BLOCKS); // MAX_BLOCKS is the maximum number of blocks
+            current_entry.num_blocks = 0;
 
             // printf("Added new lexicon entry: term='%s', block_index=%d, offset=%zu, count=%d\n",
             //     current_entry.term, current_entry.block_index,
@@ -223,31 +276,7 @@ void create_inverted_index(const char *sorted_file_path) {
         if (doc_id != current_posting_did) {
             // moved onto next posting in postings list
             // printf("Moved onto next posting in postings list, add current posting to block\n");
-            // compress current posting and add to docids and frequencies
-
-            // compress doc_id and add to docids
-            // printf("Compressing doc_id=%d\n", current_posting_did);
-            compressed_doc_size = varbyte_encode(current_posting_did, compressed_doc_data);
-            // printf("Compressing count=%d\n", current_posting_count);
-            // compress count and add to frequencies
-            compressed_freq_size = varbyte_encode(current_posting_count, compressed_freq_data);
-
-            // printf("Checking size of docs and freqs\n");
-            if ((docids->size + compressed_doc_size > BLOCK_SIZE) || (frequencies->size + compressed_freq_size > BLOCK_SIZE)) {
-                // printf("docids or freqs block is full, adding docids to index\n");
-                add_to_index(docids, &current_block_number, blocks, findex);
-                // printf("now adding frequencies to index\n");
-                add_to_index(frequencies, &current_block_number, blocks, findex);
-            }
-
-            // printf("Adding compressed doc_id to docids\n");
-            memcpy(docids->data + docids->size, compressed_doc_data, compressed_doc_size);
-            docids->size += compressed_doc_size;
-
-            // printf("Adding count to frequencies\n");
-            memcpy(frequencies->data + frequencies->size, compressed_freq_data, compressed_freq_size);
-            frequencies->size += compressed_freq_size;
-
+            insert_posting(docids, frequencies, current_posting_did, current_posting_count, &current_block_number, blocks, findex, &current_entry);
 
             // Update current_posting_did and reset current_posting_count
             current_posting_did = doc_id;
@@ -270,32 +299,27 @@ void create_inverted_index(const char *sorted_file_path) {
     }
 
     // add last posting to docids and frequencies
-    compressed_doc_size = varbyte_encode(current_posting_did, compressed_doc_data);
-    compressed_freq_size = varbyte_encode(current_posting_count, compressed_freq_data);
-    if ((docids->size + compressed_doc_size > BLOCK_SIZE) || (frequencies->size + compressed_freq_size > BLOCK_SIZE)) {
-        // if there is no room to add the last posting into the current postings block, pipe current block to index
-        add_to_index(docids, &current_block_number, blocks, findex);
-        add_to_index(frequencies, &current_block_number, blocks, findex);
-    }
-    // add last posting to block
-    memcpy(docids->data + docids->size, compressed_doc_data, compressed_doc_size);
-    docids->size += compressed_doc_size;
-    memcpy(frequencies->data + frequencies->size, compressed_freq_data, compressed_freq_size);
+    insert_posting(docids, frequencies, current_posting_did, current_posting_count, &current_block_number, blocks, findex, &current_entry);
     
-
-
     printf("\nFinished scanning sorted_posts.txt\n");
-
 
     // finished - fill in lexicon for last value 
     if (current_entry.term != NULL && current_entry.term[0] != '\0') {
-        current_entry.last_did_offset = docids->size;
-        current_entry.last_did_block = current_block_number;
+        current_entry.last_d_offset = docids->size;
+        current_entry.last_f_offset = frequencies->size;
+        current_entry.last_d_block = current_block_number;
         current_entry.last_did = last_doc_id; // Add last_doc_id to lexicon entry
         // printf("Writing final current_entry %s to lexicon_out\n", current_entry.term);
-        fprintf(flexi, "%s %d %d %zu %d %d %zu\n", current_entry.term, current_entry.count,
-                current_entry.block_index, current_entry.offset, current_entry.last_did_block, current_entry.last_did, current_entry.last_did_offset);
+        fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d", current_entry.term, current_entry.count,
+            current_entry.start_d_block, current_entry.start_d_offset, current_entry.start_f_offset,
+            current_entry.last_d_block, current_entry.last_d_offset, current_entry.last_f_offset,
+            current_entry.last_did);
+        for (size_t i = 0; i <= current_entry.num_blocks; i++) {
+            fprintf(flexi, " %d", current_entry.last[i]);
+        }
+        fprintf(flexi, "\n");
         free(current_entry.term);
+        free(current_entry.last); // Free the memory allocated for the last array
     }
 
     // write the last blocks to the index
