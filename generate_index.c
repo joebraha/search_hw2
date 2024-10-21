@@ -94,15 +94,15 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id, i
     unsigned char compressed_freq_data[10];
 
     // compress doc_id and add to docids
-    // printf("Compressing doc_id=%d\n", current_posting_did);
+    // printf("\tCompressing doc_id=%d\n", doc_id);
     compressed_doc_size = varbyte_encode(doc_id, compressed_doc_data);
-    // printf("Compressing count=%d\n", current_posting_count);
+    // printf("\tCompressing count=%d\n", count);
     // compress count and add to frequencies
     compressed_freq_size = varbyte_encode(count, compressed_freq_data);
 
     // printf("Checking size of docs and freqs\n");
     if ((docids->size + compressed_doc_size > BLOCK_SIZE) || (frequencies->size + compressed_freq_size > BLOCK_SIZE)) {
-        // printf("docids or freqs block is full, adding docids to index\n");
+        // printf("\tdocids or freqs block is full, adding docids to index\n");
         
         add_to_index(docids, current_block_number, blocks, findex);
         // printf("now adding frequencies to index\n");
@@ -110,11 +110,11 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id, i
         current_entry->num_blocks++;
     }
 
-    // printf("Adding compressed doc_id to docids\n");
+    // printf("\tAdding compressed doc_id to docids\n");
     memcpy(docids->data + docids->size, compressed_doc_data, compressed_doc_size);
     docids->size += compressed_doc_size;
 
-    // printf("Adding count to frequencies\n");
+    // printf("\tAdding count to frequencies\n");
     memcpy(frequencies->data + frequencies->size, compressed_freq_data, compressed_freq_size);
     frequencies->size += compressed_freq_size;
 
@@ -212,6 +212,8 @@ void create_inverted_index(const char *sorted_file_path) {
     int current_posting_did = -1;
     int current_posting_count = 0;
 
+    // debug
+    // int num_postings_inserted = 0;
 
     // Initialize current_entry
     LexiconEntry current_entry;
@@ -223,10 +225,12 @@ void create_inverted_index(const char *sorted_file_path) {
     while (fscanf(fsorted_posts, "%s %d %d\n", word, &doc_id, &count) != EOF) {
         // printf("\nScanning word: %s, count: %d, doc_id: %d\n", word, count, doc_id);
         if (strcmp(current_term, word) != 0) {
-            // printf("Encountering new term- current term is %s, word is %s\n", current_term, word);
+            // printf("\tEncountering new term- current term is %s, word is %s\n", current_term, word);
             if (current_entry.term != NULL && current_entry.term[0] != '\0') {
-                // printf("Inserting last posting from last postings list\n");
                 // encountering next term - need to write last posting in last posting list to dids and freqs
+                // printf("\tInserting last posting from last postings list\n");
+                // num_postings_inserted++;
+                // printf("\t%d postings inserted\n", num_postings_inserted);
                 insert_posting(docids, frequencies, current_posting_did, current_posting_count, &current_block_number, blocks, findex, &current_entry);
                 // printf("last docid in last block: %d\n", current_entry.last[current_entry.num_blocks]);
                 current_entry.last_d_offset = docids->size;
@@ -234,11 +238,11 @@ void create_inverted_index(const char *sorted_file_path) {
                 current_entry.last_d_block = current_block_number;
                 current_entry.last_did = last_doc_id;
 
-                // printf("Writing current_entry %s to lexicon_out\n", current_entry.term);
-                fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d", current_entry.term, current_entry.count,
+                // printf("\tWriting current_entry %s to lexicon_out\n", current_entry.term);
+                fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu", current_entry.term, current_entry.count,
                     current_entry.start_d_block, current_entry.start_d_offset, current_entry.start_f_offset,
                     current_entry.last_d_block, current_entry.last_d_offset, current_entry.last_f_offset,
-                    current_entry.last_did);
+                    current_entry.last_did, current_entry.num_blocks);
                 for (size_t i = 0; i <= current_entry.num_blocks; i++) {
                     fprintf(flexi, " %d", current_entry.last[i]);
                 }
@@ -255,7 +259,7 @@ void create_inverted_index(const char *sorted_file_path) {
             current_posting_count = 0;
 
             // Debug: Print the current term after update
-            // printf("Current term updated to: '%s'\n", current_term);
+            // printf("\tCurrent term updated to: '%s'\n", current_term);
 
             memset(&current_entry, 0, sizeof(LexiconEntry)); // Zero out the memory of current_entry
             current_entry.term = strdup(word); 
@@ -268,26 +272,27 @@ void create_inverted_index(const char *sorted_file_path) {
             current_entry.last = malloc(sizeof(int) * MAX_BLOCKS); // MAX_BLOCKS is the maximum number of blocks
             current_entry.num_blocks = 0;
 
-            // printf("Added new lexicon entry: term='%s', block_index=%d, offset=%zu, count=%d\n",
-            //     current_entry.term, current_entry.block_index,
-            //     current_entry.offset, current_entry.count);  
+            // printf("\tAdded new lexicon entry: term='%s', start_d_block=%d, start_d_offset=%zu, start_f_offset=%zu, count=%d\n",
+            //     current_entry.term, current_entry.start_d_block,
+            //     current_entry.start_d_offset, current_entry.start_f_offset, current_entry.count);  
         }
         // not a new term
         if (doc_id != current_posting_did) {
             // moved onto next posting in postings list
-            // printf("Moved onto next posting in postings list, add current posting to block\n");
+            // printf("\tMoved onto next posting in postings list, add current posting to block\n");
             insert_posting(docids, frequencies, current_posting_did, current_posting_count, &current_block_number, blocks, findex, &current_entry);
-
+            // printf("\tInserted %d postings\n", num_postings_inserted);
+            // num_postings_inserted++;
             // Update current_posting_did and reset current_posting_count
             current_posting_did = doc_id;
             current_posting_count = count;
-            // printf("Next posting is: %s in document %d\n", word, doc_id);
+            // printf("\tNext posting is: %s in document %d\n", word, doc_id);
         }
         else {
             // same doc_id, still on current posting, so just update the count
-            // printf("Still on same posting in document %d, add count %d to current posting count %d\n", doc_id, count, current_posting_count);
+            // printf("\tStill on same posting in document %d, add count %d to current posting count %d\n", doc_id, count, current_posting_count);
             current_posting_count += count;
-            // printf("Still on same posting in document %d, posting count is now %d\n", doc_id, current_posting_count);
+            // printf("\tStill on same posting in document %d, posting count is now %d\n", doc_id, current_posting_count);
         }
 
 
@@ -299,9 +304,10 @@ void create_inverted_index(const char *sorted_file_path) {
     }
 
     // add last posting to docids and frequencies
+    // printf("\nInserting last posting from last postings list\n");
     insert_posting(docids, frequencies, current_posting_did, current_posting_count, &current_block_number, blocks, findex, &current_entry);
     
-    printf("\nFinished scanning sorted_posts.txt\n");
+    // printf("\nFinished scanning sorted_posts.txt\n");
 
     // finished - fill in lexicon for last value 
     if (current_entry.term != NULL && current_entry.term[0] != '\0') {
@@ -310,10 +316,10 @@ void create_inverted_index(const char *sorted_file_path) {
         current_entry.last_d_block = current_block_number;
         current_entry.last_did = last_doc_id; // Add last_doc_id to lexicon entry
         // printf("Writing final current_entry %s to lexicon_out\n", current_entry.term);
-        fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d", current_entry.term, current_entry.count,
+        fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu", current_entry.term, current_entry.count,
             current_entry.start_d_block, current_entry.start_d_offset, current_entry.start_f_offset,
             current_entry.last_d_block, current_entry.last_d_offset, current_entry.last_f_offset,
-            current_entry.last_did);
+            current_entry.last_did, current_entry.num_blocks);
         for (size_t i = 0; i <= current_entry.num_blocks; i++) {
             fprintf(flexi, " %d", current_entry.last[i]);
         }
