@@ -1,6 +1,5 @@
 #include "uthash.h" // Include uthash header for hash table
 #include <ctype.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,9 +11,6 @@
 #define BLOCK_SIZE (size_t)65536 // 64KB
 #define MAX_BLOCKS                                                             \
     1000 // Maximum number of blocks for one term- need to check this
-#define N_DOCUMENTS                                                            \
-    8841823 // Number of documents in the collection *** how many docs in
-            // collection?
 
 // Define constants for search modes
 #define CONJUNCTIVE 1
@@ -36,7 +32,7 @@ typedef struct {
     char term[MAX_WORD_SIZE];
     int global_term_frequency;
     int curr_doc_id;     // current posting's docid
-    int curr_freq;       // current posting's frequency
+    int curr_score;      // current posting's frequency
     size_t curr_posting; // pointer to current posting in the list
     int curr_block;
     int compressed; // 0 or 1, whether the current block is compressed
@@ -50,6 +46,8 @@ typedef struct {
 typedef struct {
     char term[MAX_WORD_SIZE];
     int count;
+    int num_entries; // the number of entries for this word. In other words, the
+                     // number of documents containing this word
     int start_d_block;
     size_t start_d_offset;
     size_t start_f_offset;
@@ -64,9 +62,6 @@ typedef struct {
 
 // Define the hash table for the lexicon
 LexiconEntry *lexicon_table = NULL;
-
-// Define the array for the docs table
-int *doc_table = NULL;
 
 // structure to keep track of postings list for a term
 typedef struct {
@@ -313,7 +308,7 @@ ListPointer *open_list(PostingsList *postings_list) {
     strcpy(lp->term, postings_list->term);
     lp->global_term_frequency = postings_list->count;
     lp->curr_doc_id = -1;
-    lp->curr_freq = -1;
+    lp->curr_score = -1;
     lp->curr_posting = 0;
     lp->curr_block = 0;
     lp->compressed = 1;
@@ -574,7 +569,7 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
             printf("\t\t\t\tFound nextGEQ docID: %d\n",
                    lp->curr_d_block_uncompressed[lp->curr_posting]);
             lp->curr_doc_id = lp->curr_d_block_uncompressed[lp->curr_posting];
-            lp->curr_freq = lp->curr_f_block_uncompressed[lp->curr_posting];
+            lp->curr_score = lp->curr_f_block_uncompressed[lp->curr_posting];
             return lp->curr_doc_id;
         }
         lp->curr_posting++;
@@ -587,43 +582,10 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
     return -1;
 }
 
-void load_doc_lengths(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("Error opening document lengths file");
-        exit(EXIT_FAILURE);
-    }
-
-    doc_table = (int *)malloc(N_DOCUMENTS * sizeof(int));
-
-    int doc_id;
-    int doc_length;
-    while (fscanf(file, "%d %d", &doc_id, &doc_length) == 2) {
-        doc_table[doc_id] = doc_length;
-    }
-
-    fclose(file);
-}
-
-// function to calculate BM25 score
-double get_score(ListPointer **lp, size_t num_terms, int doc_id) {
-    double k1 = 1.2;               // free parameter
-    double b = 0.75;               // free parameter
-    double avg_doc_length = 66.93; // average document length
-    double d = doc_table[doc_id];  // length of this document
-
-    double score = 0.0;
-    for (size_t i = 0; i < num_terms; i++) {
-        int f = lp[i]->curr_freq; // term frequency in this document
-        double tf = 0.0;
-        double numerator = f * (k1 + 1.0);
-        double denominator = f + k1 * (1.0 - b + b * (avg_doc_length / d));
-        tf = numerator / denominator;
-        double idf;
-        numerator = num_terms + 0.5;
-        denominator = N_DOCUMENTS - num_terms + 0.5;
-        idf = log((numerator / denominator) + 1.0);
-        score += (idf * tf);
+int get_score(ListPointer **lp, int num_terms) {
+    int score = 0;
+    for (int i = 0; i < num_terms; i++) {
+        score += lp[i]->curr_score;
     }
     return score;
 }
@@ -701,9 +663,9 @@ void DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
             printf(
                 "\t\tDocID: %d found in all lists. Calculating BM25 score.\n",
                 did);
-            double score = get_score(lp, num_terms, did);
+            int score = get_score(lp, num_terms);
             // insert into heap
-            printf("\t\tInserting docID: %d with score: %f into heap.\n", did,
+            printf("\t\tInserting docID: %d with score: %d into heap.\n", did,
                    score);
             insert(top_10, did, score);
             printf("\t\tScore inserted into heap. Checking next greatest "
@@ -728,14 +690,14 @@ void load_lexicon(const char *filename) {
     }
 
     char term[MAX_WORD_SIZE];
-    int count, last_did, start_d_block, last_d_block;
+    int count, num_entries, last_did, start_d_block, last_d_block;
     size_t start_d_offset, start_f_offset, last_f_offset, last_d_offset,
         num_blocks;
 
-    while (fscanf(file, "%s %d %d %zu %zu %d %zu %zu %d %zu", term, &count,
-                  &start_d_block, &start_d_offset, &start_f_offset,
-                  &last_d_block, &last_d_offset, &last_f_offset, &last_did,
-                  &num_blocks) == 10) {
+    while (fscanf(file, "%s %d %d %d %zu %zu %d %zu %zu %d %zu", term, &count,
+                  &num_entries, &start_d_block, &start_d_offset,
+                  &start_f_offset, &last_d_block, &last_d_offset,
+                  &last_f_offset, &last_did, &num_blocks) == 11) {
         LexiconEntry *entry = (LexiconEntry *)malloc(sizeof(LexiconEntry));
         if (!entry) {
             perror("Error allocating memory for lexicon entry");
@@ -743,6 +705,7 @@ void load_lexicon(const char *filename) {
         }
         strcpy(entry->term, term);
         entry->count = count;
+        entry->num_entries = num_entries;
         entry->start_d_block = start_d_block;
         entry->start_d_offset = start_d_offset;
         entry->start_f_offset = start_f_offset;
@@ -770,6 +733,7 @@ void load_lexicon(const char *filename) {
             }
         }
 
+        // printf("%s %d\n", entry->term, entry->num_entries);
         // Add the entry to the hash table
         HASH_ADD_STR(lexicon_table, term, entry);
     }
@@ -799,9 +763,6 @@ int main(int argc, char *argv[]) {
 
     // open index file
     FILE *index = fopen("final_index.dat", "rb");
-
-    // open document lengths file
-    load_doc_lengths("parser/testout_docs.txt");
 
     // fetch search mode from command line interface
     // fetch full query from command line interface
