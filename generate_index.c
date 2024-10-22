@@ -145,7 +145,7 @@ size_t varbyte_encode(int value, unsigned char *output) {
     return i;
 }
 
-void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id,
+void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
                     int count, int *current_block_number, MemoryBlock *blocks,
                     FILE *findex, LexiconEntry *current_entry) {
     size_t compressed_doc_size;
@@ -160,18 +160,16 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id,
     unsigned char score = get_score(count, doc_id, current_entry->num_entries);
 
     // printf("Checking size of docs and freqs\n");
-    if ((docids->size + compressed_doc_size > BLOCK_SIZE) ||
-        (frequencies->size + 1 > BLOCK_SIZE)) {
+    if (docids->size + compressed_doc_size > BLOCK_SIZE) {
         // printf("\tdocids or freqs block is full, adding docids to index\n");
 
         // pad frequency block with 0s
-        if (frequencies->size < BLOCK_SIZE) {
-            memset(frequencies->data + frequencies->size, 0,
-                   BLOCK_SIZE - frequencies->size);
+        if (scores->size < BLOCK_SIZE) {
+            memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size);
         }
         add_to_index(docids, current_block_number, blocks, findex);
         // printf("now adding frequencies to index\n");
-        add_to_index(frequencies, current_block_number, blocks, findex);
+        add_to_index(scores, current_block_number, blocks, findex);
         current_entry->num_blocks++;
     }
 
@@ -181,7 +179,7 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id,
     docids->size += compressed_doc_size;
 
     // printf("\tAdding score to frequencies\n");
-    frequencies->data[frequencies->size++] = score;
+    scores->data[scores->size++] = score;
 
     // Add the last inserted docID to the last array
     current_entry->last[current_entry->num_blocks] = doc_id;
