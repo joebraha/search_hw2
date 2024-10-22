@@ -16,15 +16,15 @@ fn main() {
 
     let f = File::open(FILE_PATH).unwrap();
     let reader = BufReader::new(f);
-    let mut fdocs = BufWriter::new(File::create("testout_docs.txt").unwrap());
-    let mut fposts = BufWriter::new(File::create("testout_posts.txt").unwrap());
-    let mut fwords = BufWriter::new(File::create("testout_words.txt").unwrap());
+    let mut fdocs = BufWriter::new(File::create("docs_out.txt").unwrap());
+    let mut fposts = BufWriter::new(File::create("posts_out.txt").unwrap());
+    let mut fwords = BufWriter::new(File::create("words_out.txt").unwrap());
 
     let lines = reader.lines();
     for line in lines {
         let line = line.unwrap();
-        let (docid, line) = insert_doc(line, &mut docs);
-        parse(line, &mut docs, &mut postings, &mut words, docid);
+        let (doctable_index, line) = insert_doc(line, &mut docs);
+        parse(line, &mut docs, &mut postings, &mut words);
         count += 1;
         if count > 1000000 {
             println!(
@@ -51,8 +51,10 @@ fn main() {
         postings.posts.len()
     );
 
+    // pipe out the last remaining data
     pipe_posts(&mut postings, &mut fposts);
     pipe_docs(&mut docs, &mut fdocs);
+    // pipe out the whole word table
     pipe_words(&mut words, &mut fwords);
 }
 
@@ -88,13 +90,7 @@ fn insert_doc(line: String, docs: &mut DocTable) -> (usize, String) {
     (docs.add(l.0.to_string()), l.1.to_string())
 }
 
-fn parse(
-    line: String,
-    docs: &mut DocTable,
-    postings: &mut Postings,
-    words: &mut WordTable,
-    docid: usize,
-) {
+fn parse(line: String, docs: &mut DocTable, postings: &mut Postings, words: &mut WordTable) {
     // replaced delimiters with is_ascii_punctuation. More aggressive parse, which should result in
     // better real english words, at the (acceptable) expense of tokenizing ranodm words (math etc.)
     let line = line.split(|c| char::is_whitespace(c) || char::is_ascii_punctuation(&c));
@@ -120,10 +116,10 @@ fn parse(
             }
         }
     }
-    docs.set_length(docid, doc_count);
+    docs.set_last_length(doc_count);
     for (word, count) in twords.into_iter() {
-        words.add(&word, count);
-        postings.add(word, count, docid as u32);
+        words.add(&word);
+        postings.add(word, count, docs.last_id());
     }
 }
 
@@ -142,8 +138,15 @@ impl DocTable {
         return self.docs.len() - 1;
     }
 
-    fn set_length(&mut self, docid: usize, length: u32) {
-        self.docs[docid].1 = length
+    // sets length of last entry in doctable
+    fn set_last_length(&mut self, length: u32) {
+        let ind = self.docs.len() - 1;
+        self.docs[ind].1 = length;
+    }
+
+    fn last_id(&self) -> String {
+        let ind = self.docs.len() - 1;
+        self.docs[ind].0.to_string()
     }
 }
 
@@ -157,11 +160,11 @@ impl WordTable {
             words: HashMap::new(),
         };
     }
-    fn add(&mut self, word: &str, count: u32) {
+    fn add(&mut self, word: &str) {
         match self.words.get_mut(word) {
             Some(c) => *c += 1,
             None => {
-                self.words.insert(word.to_string(), count);
+                self.words.insert(word.to_string(), 1);
             }
         }
     }
@@ -176,13 +179,13 @@ impl Postings {
         Self { posts: Vec::new() }
     }
 
-    fn add(&mut self, word: String, count: u32, docid: u32) {
+    fn add(&mut self, word: String, count: u32, docid: String) {
         self.posts.push(Posting { word, docid, count });
     }
 }
 
 struct Posting {
     word: String,
-    docid: u32,
+    docid: String,
     count: u32,
 }
