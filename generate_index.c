@@ -49,7 +49,7 @@ int *doc_table = NULL;
 // this function opens the final index file, writes the blocks to the file,
 // and resets the block size of each block
 // *** added in some additional error handling
-void pipe_to_file(CompressedData *blocks, FILE *file) {
+void pipe_to_file(MemoryBlock *blocks, FILE *file) {
     // Ensure the file is open
     if (!file) {
         perror("Error: File is not open");
@@ -117,7 +117,7 @@ double get_score(int freq, int doc_id, int num_entries) {
 }
 
 void add_to_index(MemoryBlock *block, int *current_block_number,
-                  CompressedData *blocks, FILE *file) {
+                  MemoryBlock *blocks, FILE *file) {
 
     // *** the block coming in now should already be compressed
     // write blocks of compressed data to disk if need be
@@ -146,27 +146,22 @@ size_t varbyte_encode(int value, unsigned char *output) {
 }
 
 void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id,
-                    int count, int *current_block_number,
-                    CompressedData *blocks, FILE *findex,
-                    LexiconEntry *current_entry) {
+                    int count, int *current_block_number, MemoryBlock *blocks,
+                    FILE *findex, LexiconEntry *current_entry) {
     size_t compressed_doc_size;
-    size_t compressed_freq_size;
 
     unsigned char compressed_doc_data[10];
-    unsigned char compressed_freq_data[10];
 
     // compress doc_id and add to docids
     // printf("\tCompressing doc_id=%d\n", doc_id);
     compressed_doc_size = varbyte_encode(doc_id, compressed_doc_data);
     // printf("\tCompressing count=%d\n", count);
     // compress count and add to frequencies
-    compressed_freq_size =
-        varbyte_encode(get_score(count, doc_id, current_entry->num_entries),
-                       compressed_freq_data);
+    unsigned char score = get_score(count, doc_id, current_entry->num_entries);
 
     // printf("Checking size of docs and freqs\n");
     if ((docids->size + compressed_doc_size > BLOCK_SIZE) ||
-        (frequencies->size + compressed_freq_size > BLOCK_SIZE)) {
+        (frequencies->size + 1 > BLOCK_SIZE)) {
         // printf("\tdocids or freqs block is full, adding docids to index\n");
 
         // pad frequency block with 0s
@@ -185,10 +180,8 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *frequencies, int doc_id,
            compressed_doc_size);
     docids->size += compressed_doc_size;
 
-    // printf("\tAdding count to frequencies\n");
-    memcpy(frequencies->data + frequencies->size, compressed_freq_data,
-           compressed_freq_size);
-    frequencies->size += compressed_freq_size;
+    // printf("\tAdding score to frequencies\n");
+    frequencies->data[frequencies->size++] = score;
 
     // Add the last inserted docID to the last array
     current_entry->last[current_entry->num_blocks] = doc_id;
@@ -226,7 +219,7 @@ void create_inverted_index(const char *sorted_file_path) {
 
     // Allocate memory for blocks array- this will hold all the compressed
     // blocks we can fill before piping to file
-    CompressedData *blocks = malloc(sizeof(CompressedData));
+    MemoryBlock *blocks = malloc(sizeof(MemoryBlock));
     if (!blocks) {
         perror("Error allocating memory for blocks");
         exit(EXIT_FAILURE);

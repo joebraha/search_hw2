@@ -381,25 +381,8 @@ size_t decompress_d_block(ListPointer *lp, PostingsList *postings_list) {
     return i; // return number of integers decompressed
 }
 
-// function to decompress current frequency block
-size_t decompress_f_block(ListPointer *lp, PostingsList *postings_list) {
-    size_t offset = 0;
-    size_t i = 0;
-    printf("\t\t\t\tDecompressing frequencies block...\n");
-    printf("\t\t\t\tInitial offset: %zu, Initial i: %zu\n", offset, i);
-    printf("\t\t\t\tCurrent docid block size: %zu\n", lp->curr_f_block_size);
-
-    while (offset < lp->curr_f_block_size) {
-        size_t bytes_read =
-            varbyte_decode(postings_list->compressed_f_list + offset,
-                           lp->curr_f_block_uncompressed + i);
-        printf("\t\t\t\t\tBytes read: %zu, Value: %d\n", bytes_read,
-               lp->curr_f_block_uncompressed[i]);
-        offset += bytes_read;
-        i++;
-    }
-    printf("\t\t\t\tTotal integers decompressed: %zu\n", i);
-    return i; // return number of integers decompressed
+size_t get_number_of_scores(ListPointer *lp, PostingsList *postings_list) {
+    // TODO: count scores until we hit a 0
 }
 
 // get block size of docids compressed block for current block
@@ -544,9 +527,10 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
             lp, postings_list); // lp->curr_d_block_uncompressed should now
                                 // contain the uncompressed docid block
         printf("\t\t\tDecompressing frequency block...\n");
-        lp->curr_f_block_size = decompress_f_block(
-            lp, postings_list); // lp->curr_f_block_uncompressed should now
-                                // contain the uncompressed frequency block
+        lp->curr_f_block_size =
+            decompress_f_block(     // TODO: change to get_number_of_scores
+                lp, postings_list); // lp->curr_f_block_uncompressed should now
+                                    // contain the uncompressed frequency block
         if (lp->curr_d_block_size != lp->curr_f_block_size) {
             perror("Error: decompressed block sizes do not match");
             exit(EXIT_FAILURE);
