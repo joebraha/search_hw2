@@ -26,12 +26,12 @@ typedef struct {
     int start_d_block;     // The block number where the first did resides
     size_t start_d_offset; // Offset within the block where the first docID is
                            // stored
-    size_t start_f_offset; // Offset within the block where the first frequency
+    size_t start_s_offset; // Offset within the block where the first impact score
                            // is stored
     int last_d_block;      // the block number where the last did resides
     size_t
         last_d_offset; // Offset within the block where the last docID is stored
-    size_t last_f_offset; // Offset within the block where the last frequency is
+    size_t last_s_offset; // Offset within the block where the last impact score is
                           // stored
     int last_did;         // the last docID in the block
     int *last;            // Array to store the last docID in each block
@@ -155,20 +155,19 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
     // compress doc_id and add to docids
     // printf("\tCompressing doc_id=%d\n", doc_id);
     compressed_doc_size = varbyte_encode(doc_id, compressed_doc_data);
-    // printf("\tCompressing count=%d\n", count);
-    // compress count and add to frequencies
+    // get score from for and add to frequencies
     unsigned char score = get_score(count, doc_id, current_entry->num_entries);
 
     // printf("Checking size of docs and freqs\n");
     if (docids->size + compressed_doc_size > BLOCK_SIZE) {
-        // printf("\tdocids or freqs block is full, adding docids to index\n");
-
-        // pad frequency block with 0s
+        // printf("\tdocids or scores block is full, adding docids to index\n");
+        // doc ids block is full, put docids block and scores block in index
+        // pad impact score block with 0s
         if (scores->size < BLOCK_SIZE) {
-            memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size);
+            memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size); // is this the correct place to insert? does size represent the offset accurately?
         }
         add_to_index(docids, current_block_number, blocks, findex);
-        // printf("now adding frequencies to index\n");
+        // printf("now adding scores to index\n");
         add_to_index(scores, current_block_number, blocks, findex);
         current_entry->num_blocks++;
     }
@@ -178,7 +177,7 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
            compressed_doc_size);
     docids->size += compressed_doc_size;
 
-    // printf("\tAdding score to frequencies\n");
+    // printf("\tAdding score to scores\n");
     scores->data[scores->size++] = score;
 
     // Add the last inserted docID to the last array
@@ -213,7 +212,7 @@ void create_inverted_index(const char *sorted_file_path) {
         printf("Opened lexicon_out\n");
     }
 
-    load_doc_lengths("parser/testout_docs.txt");
+    load_doc_lengths("testout_docs.txt");
 
     // Allocate memory for blocks array- this will hold all the compressed
     // blocks we can fill before piping to file
@@ -233,7 +232,7 @@ void create_inverted_index(const char *sorted_file_path) {
     }
     blocks->size = 0;
 
-    // Temporary buffers for docids and frequencies to go into one block
+    // block size buffers for docids and scores
     MemoryBlock *docids = malloc(sizeof(MemoryBlock));
     if (!docids) {
         perror("Error allocating memory for docids");
@@ -248,12 +247,12 @@ void create_inverted_index(const char *sorted_file_path) {
 
     MemoryBlock *scores = malloc(sizeof(MemoryBlock));
     if (!scores) {
-        perror("Error allocating memory for frequencies");
+        perror("Error allocating memory for scores");
         exit(EXIT_FAILURE);
     }
     scores->data = malloc(BLOCK_SIZE);
     if (!scores->data) {
-        perror("Error allocating memory for frequencies->data");
+        perror("Error allocating memory for scores->data");
         exit(EXIT_FAILURE);
     }
     scores->size = 0;
@@ -283,7 +282,7 @@ void create_inverted_index(const char *sorted_file_path) {
     LexiconEntry current_entry;
     memset(&current_entry, 0, sizeof(LexiconEntry));
 
-    printf("Allocated memory for blocks, docids, and frequencies\n");
+    printf("Allocated memory for blocks, docids, and scores\n");
     printf("Starting to read sorted_posts.txt\n");
 
     while (fscanf(fsorted_posts, "%s %d %d\n", word, &doc_id, &count) != EOF) {
@@ -303,7 +302,7 @@ void create_inverted_index(const char *sorted_file_path) {
                 // printf("last docid in last block: %d\n",
                 // current_entry.last[current_entry.num_blocks]);
                 current_entry.last_d_offset = docids->size;
-                current_entry.last_f_offset = scores->size;
+                current_entry.last_s_offset = scores->size;
                 current_entry.last_d_block = current_block_number;
                 current_entry.last_did = last_doc_id;
 
@@ -313,9 +312,9 @@ void create_inverted_index(const char *sorted_file_path) {
                         current_entry.term, current_entry.count,
                         current_entry.num_entries, current_entry.start_d_block,
                         current_entry.start_d_offset,
-                        current_entry.start_f_offset,
+                        current_entry.start_s_offset,
                         current_entry.last_d_block, current_entry.last_d_offset,
-                        current_entry.last_f_offset, current_entry.last_did,
+                        current_entry.last_s_offset, current_entry.last_did,
                         current_entry.num_blocks);
                 for (size_t i = 0; i <= current_entry.num_blocks; i++) {
                     fprintf(flexi, " %d", current_entry.last[i]);
@@ -342,7 +341,7 @@ void create_inverted_index(const char *sorted_file_path) {
             current_entry.term = strdup(word);
             current_entry.start_d_block = current_block_number;
             current_entry.start_d_offset = docids->size;
-            current_entry.start_f_offset = scores->size;
+            current_entry.start_s_offset = scores->size;
             current_entry.count = 0; // Initialize count
             current_entry.num_entries = 1;
 
@@ -402,7 +401,7 @@ void create_inverted_index(const char *sorted_file_path) {
     // finished - fill in lexicon for last value
     if (current_entry.term != NULL && current_entry.term[0] != '\0') {
         current_entry.last_d_offset = docids->size;
-        current_entry.last_f_offset = scores->size;
+        current_entry.last_s_offset = scores->size;
         current_entry.last_d_block = current_block_number;
         current_entry.last_did =
             last_doc_id; // Add last_doc_id to lexicon entry
@@ -411,9 +410,9 @@ void create_inverted_index(const char *sorted_file_path) {
         fprintf(flexi, "%s %d %d %d %zu %zu %d %zu %zu %d %zu",
                 current_entry.term, current_entry.count,
                 current_entry.num_entries, current_entry.start_d_block,
-                current_entry.start_d_offset, current_entry.start_f_offset,
+                current_entry.start_d_offset, current_entry.start_s_offset,
                 current_entry.last_d_block, current_entry.last_d_offset,
-                current_entry.last_f_offset, current_entry.last_did,
+                current_entry.last_s_offset, current_entry.last_did,
                 current_entry.num_blocks);
         for (size_t i = 0; i <= current_entry.num_blocks; i++) {
             fprintf(flexi, " %d", current_entry.last[i]);
