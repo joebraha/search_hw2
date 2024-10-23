@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "uthash.h" // Include uthash
 
 #define BLOCK_SIZE (size_t)65536 // 64KB
 #define MAX_WORD_SIZE (size_t)190
@@ -42,6 +43,14 @@ typedef struct {
     size_t size;
     unsigned char *data;
 } CompressedData;
+
+typedef struct {
+    char *term;       // Key
+    int count;        // Value
+    UT_hash_handle hh; // Makes this structure hashable
+} TermEntry;
+
+TermEntry *terms = NULL; // Hash table
 
 // Define the array for the docs table
 int *doc_table = NULL;
@@ -116,6 +125,25 @@ double get_score(int freq, int doc_id, int num_entries) {
     return ret;
 }
 
+void read_words_out(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Failed to open words_out.txt");
+        exit(EXIT_FAILURE);
+    }
+
+    char term[256];
+    int count;
+    while (fscanf(file, "%s %d", term, &count) == 2) {
+        TermEntry *entry = malloc(sizeof(TermEntry));
+        entry->term = strdup(term);
+        entry->count = count;
+        HASH_ADD_KEYPTR(hh, terms, entry->term, strlen(entry->term), entry);
+    }
+
+    fclose(file);
+}
+
 void add_to_index(MemoryBlock *block, int *current_block_number,
                   MemoryBlock *blocks, FILE *file) {
 
@@ -156,15 +184,53 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
     // printf("\tCompressing doc_id=%d\n", doc_id);
     compressed_doc_size = varbyte_encode(doc_id, compressed_doc_data);
     // get score from for and add to frequencies
+
     unsigned char score = get_score(count, doc_id, current_entry->num_entries);
 
+    // if (strcmp(current_entry->term, "manhattan") == 0) {
+    //     // print docid, count, scores
+    //     double k1 = 1.2;               // free parameter
+    //     double b = 0.75;               // free parameter
+    //     double avg_doc_length = 66.93; // average document length
+    //     int d = doc_table[doc_id];     // length of this document
+    //     int f = count; // term frequency in this document
+    //     double tf = 0.0;
+    //     printf("k1 = %f, b = %f, avg_doc_length = %f, d = %d, f = %d, num_entries = %d\n", k1, b,
+    //            avg_doc_length, d, f, current_entry->num_entries);
+    //     double numerator = f * (k1 + 1.0);
+    //     printf("TF numerator = %f\n", numerator);
+    //     double denominator = f + k1 * (1.0 - b + b * (d / avg_doc_length));
+    //     printf("TF denominator = %f\n", denominator);
+    //     tf = numerator / denominator;
+    //     printf("TF = %f\n", tf);
+    //     double idf;
+    //     denominator = current_entry->num_entries + 0.5;
+    //     printf("IDF denominator = %f\n", denominator);
+    //     numerator = N_DOCUMENTS - current_entry->num_entries + 0.5;
+    //     printf("IDF numerator = %f\n", numerator);
+    //     idf = log((numerator / denominator) + 1.0);
+    //     printf("IDF = %f\n", idf);
+    //     double curr_score = (idf * tf);
+    //     printf("Score = %f\n", curr_score);
+    //     unsigned char ret = (unsigned char)(score * 100);
+    //     printf("Final score = %u\n", ret);
+
+    // }
+
     // printf("Checking size of docs and freqs\n");
-    if (docids->size + compressed_doc_size > BLOCK_SIZE) {
+    if ((docids->size + compressed_doc_size) > BLOCK_SIZE) {
         // printf("\tdocids or scores block is full, adding docids to index\n");
         // doc ids block is full, put docids block and scores block in index
-        // pad impact score block with 0s
+        // pad docids block with 0s so it is a full BLOCK_SIZE sized block
+        if (docids->size < BLOCK_SIZE) {
+            memset(docids->data + docids->size, 0,
+                   BLOCK_SIZE - docids->size); // pad with 0s
+            // docids->size = BLOCK_SIZE; // set size to BLOCK_SIZE
+        }
+        // pad impact score block with 0s so it is a full BLOCK_SIZE sized block
         if (scores->size < BLOCK_SIZE) {
-            memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size); // is this the correct place to insert? does size represent the offset accurately?
+            memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size);
+            // scores->size = BLOCK_SIZE; // set size to BLOCK_SIZE
         }
         add_to_index(docids, current_block_number, blocks, findex);
         // printf("now adding scores to index\n");
@@ -212,7 +278,8 @@ void create_inverted_index(const char *sorted_file_path) {
         printf("Opened lexicon_out\n");
     }
 
-    load_doc_lengths("testout_docs.txt");
+    load_doc_lengths("docs_out.txt");
+    read_words_out("words_out.txt");
 
     // Allocate memory for blocks array- this will hold all the compressed
     // blocks we can fill before piping to file
@@ -343,7 +410,14 @@ void create_inverted_index(const char *sorted_file_path) {
             current_entry.start_d_offset = docids->size;
             current_entry.start_s_offset = scores->size;
             current_entry.count = 0; // Initialize count
-            current_entry.num_entries = 1;
+            // Get the correct number of entries for the term
+            TermEntry *term_entry;
+            HASH_FIND_STR(terms, current_entry.term, term_entry);
+            if (!term_entry) {
+                fprintf(stderr, "Term not found in words_out.txt: %s\n", current_entry.term);
+                exit(EXIT_FAILURE);
+            }
+            current_entry.num_entries = term_entry->count;
 
             // Initialize the last array and num_blocks
             current_entry.last = malloc(
@@ -370,7 +444,7 @@ void create_inverted_index(const char *sorted_file_path) {
             // Update current_posting_did and reset current_posting_count
             current_posting_did = doc_id;
             current_posting_count = count;
-            current_entry.num_entries++;
+            // current_entry.num_entries++; // get rid of, using words_out.txt now instead ***
             // printf("\tNext posting is: %s in document %d\n", word, doc_id);
         } else {
             // same doc_id, still on current posting, so just update the count

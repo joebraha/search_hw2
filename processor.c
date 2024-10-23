@@ -407,8 +407,8 @@ void decompress_block(ListPointer *lp, PostingsList *postings_list) {
     // decompress and write into uncompressed docid block in lp
     size_t offset = get_d_block_offset(lp, postings_list);
     size_t i = 0;
-    printf("\t\t\t\tDecompressing docid block: %d\n", lp->curr_block);
-    printf("\t\t\t\tInitial offset: %zu, Initial i: %zu\n", offset, i);
+    printf("\t\t\t\tDecompressing docid block: %d \n", lp->curr_block);
+    // printf("\t\t\t\tInitial offset: %zu, Initial i: %zu\n", offset, i);
     // printf("\t\t\t\tCurrent docid block size: %zu\n", lp->curr_d_block_size);
     int last_doc_id_in_block = postings_list->last[lp->curr_block];
     printf("\t\t\t\tLast docid in block: %d\n", last_doc_id_in_block);
@@ -420,9 +420,9 @@ void decompress_block(ListPointer *lp, PostingsList *postings_list) {
         // printf("\t\t\t\t\tBytes read: %zu, Value: %d\n", bytes_read,
             //    lp->curr_d_block_uncompressed[i]);
         offset += bytes_read;
-        if ((i % 10000) == 0) {
-            printf("\t\t\t\t\t%zu integers decoded. Decoded value: %d\n", i, lp->curr_d_block_uncompressed[i]);
-        }
+        // if ((i % 10000) == 0) {
+        //     printf("\t\t\t\t\t%zu integers decoded. Decoded value: %d\n", i, lp->curr_d_block_uncompressed[i]);
+        // }
         if (lp->curr_d_block_uncompressed[i] == last_doc_id_in_block) {
             i++;
             printf("\t\t\t\t\tFound last docid in block: %d\n", last_doc_id_in_block);
@@ -439,17 +439,17 @@ void decompress_block(ListPointer *lp, PostingsList *postings_list) {
 
       // fetch block of scores from postings_list->s_list and store in uncompressed score block in lp
     offset = get_s_block_offset(lp, postings_list);
-    printf("\t\t\t\tReading scores starting at offset: %zu\n", offset);
+    // printf("\t\t\t\tReading scores starting at offset: %zu\n", offset);
     for (size_t j = 0; j < i; j++) {
         lp->curr_s_block_uncompressed[j] = postings_list->s_list[offset + j];
-        printf("Score byte %zu: %u\n", j, lp->curr_s_block_uncompressed[j]);
+        // printf("Score byte %zu: %u\n", j, lp->curr_s_block_uncompressed[j]);
     }
     printf("\t\t\t\tTotal scores read: %zu\n", i);
 
-    // Print the scores for debugging
-    for (size_t j = 0; j < i; j++) {
-        printf("DocID: %d, Score: %u\n", lp->curr_d_block_uncompressed[j], lp->curr_s_block_uncompressed[j]);
-    }
+    // // Print the scores for debugging
+    // for (size_t j = 0; j < i; j++) {
+    //     printf("DocID: %d, Score: %u\n", lp->curr_d_block_uncompressed[j], lp->curr_s_block_uncompressed[j]);
+    // }
 }
 
 
@@ -472,7 +472,8 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
         lp->curr_block++;
         lp->compressed = 1; // moving to new block, use this info to indicate
                             // that we should free the old uncompressed data
-        if (lp->curr_block > postings_list->num_blocks) {
+        lp->curr_posting = 0; // reset posting index to 0 for new block
+        if (lp->curr_block >= postings_list->num_blocks) {
             // all of the docids in this list are less than k, terminate search
             // we have either hit the end of the list or there are no results to be found
             lp->curr_doc_id = postings_list->last_did;
@@ -486,7 +487,7 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
            lp->curr_block, postings_list->last[lp->curr_block]);
 
     if (lp->compressed) {
-        printf("\t\t\tBlock is compressed. Decompressing block...\n");
+        // printf("\t\t\tBlock is compressed. Decompressing block...\n");
         // free the old uncompressed data if it exists, make room for new block
         // to be uncompressed
         if (lp->curr_d_block_uncompressed) {
@@ -500,13 +501,13 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
 
         // allocating space for worst case scenario- each byte in compressed
         // block corresponds to single integer in uncompressed block
-        printf("\t\t\tAllocating memory for uncompressed blocks...\n");
+        // printf("\t\t\tAllocating memory for uncompressed blocks...\n");
         size_t max_uncompressed_size =
             BLOCK_SIZE * 4; // allotting for extra space for uncompressed block of docids
         lp->curr_d_block_uncompressed = malloc(max_uncompressed_size * sizeof(int));
         lp->curr_s_block_uncompressed = malloc(BLOCK_SIZE * sizeof(int)); // one block of scores should be 64KB
         if (!lp->curr_d_block_uncompressed || !lp->curr_s_block_uncompressed) {
-            perror("Error allocating memory for uncompressed blocks");
+            // perror("Error allocating memory for uncompressed blocks");
             exit(EXIT_FAILURE);
         }
 
@@ -522,8 +523,9 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
     // loop through current decompressed block to find next greatest or equal
     // docID
     int last_doc_id_in_block = postings_list->last[lp->curr_block];
+    printf("\t\t\tLast docID in block: %d\n", last_doc_id_in_block);
     while (1) {
-        printf("\t\t\t\tChecking docID: %d\n", lp->curr_d_block_uncompressed[lp->curr_posting]);
+        // printf("\t\t\t\tChecking docID: %d\n", lp->curr_d_block_uncompressed[lp->curr_posting]);
         if (lp->curr_d_block_uncompressed[lp->curr_posting] >= k) {
             printf("\t\t\t\tFound nextGEQ docID: %d\n", lp->curr_d_block_uncompressed[lp->curr_posting]);
             lp->curr_doc_id = lp->curr_d_block_uncompressed[lp->curr_posting];
@@ -546,14 +548,14 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
 }
 
 int get_score(ListPointer **lp, int num_terms) {
-    printf("\t\t\tCalculating BM25 score for docID: %d\n", lp[0]->curr_doc_id);
+    // printf("\t\t\tCalculating BM25 score for docID: %d\n", lp[0]->curr_doc_id);
     int score = 0;
     for (int i = 0; i < num_terms; i++) {
-        printf("\t\t\t\tTerm: %d, Score: %d\n", i, lp[i]->curr_score);
+        // printf("\t\t\t\tTerm: %d, Score: %d\n", i, lp[i]->curr_score);
         score += lp[i]->curr_score;
-        printf("\t\t\t\tCurrent score: %d\n", score);
+        // printf("\t\t\t\tCurrent score: %d\n", score);
     }
-    printf("\t\t\tBM25 score for docID: %d is: %d\n", lp[0]->curr_doc_id, score);
+    // printf("\t\t\tBM25 score for docID: %d is: %d\n", lp[0]->curr_doc_id, score);
     return score;
 }
 
@@ -589,14 +591,15 @@ void DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
     // step 3 - traversal
     while (did <= max_did) {
         // get next post from shortest list
-        printf("\t\tGetting nextGEQ for docID: %d in shortest list\n", did);
+        printf("\n\t\tGetting nextGEQ for docID: %d in shortest list- term %s\n", did, lp[0]->term);
         did = nextGEQ(lp[0], did, &postings_lists[0]);
-        printf("\t\tNextGEQ for shortest list is docID: %d\n", did);
+        // printf("\t\tNextGEQ for shortest list is docID: %d\n", did);
         // check if did is in all other lists, if not, check next greatest docID
         int d;
         size_t j;
         printf("\t\tChecking if docID is in all other lists...\n");
         for (j = 1; j < num_terms; j++) {
+            printf("\t\t\tLooking at next term: j: %zu\n", j);
             printf("\t\t\tLooking for did: %d in term: %s\n", did, lp[j]->term);
             d = nextGEQ(lp[j], did, &postings_lists[j]);
             if (d != did) {
@@ -608,6 +611,7 @@ void DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
         if (num_terms == 1) {
             // if there is only one term, then we know that the docID are in "all" of the lists
             // we want to keep going along this list and find the top 10 BM25 scores
+            printf("\t\tOnly one term in query. Continuing search for docID: %d\n", did);
             d = did;
         }
         if (d > did) {
@@ -639,8 +643,8 @@ void DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
             printf("\t\tInserting docID: %d with score: %d into heap.\n", did,
                    score);
             insert(top_10, did, score);
-            printf("\t\tScore inserted into heap. Checking next greatest "
-                   "docID.\n");
+            // printf("\t\tScore inserted into heap. Checking next greatest "
+            //        "docID.\n");
             // check next greatest docID from shortest list
             did++;
         }
