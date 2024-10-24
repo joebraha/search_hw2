@@ -225,12 +225,12 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
         if (docids->size < BLOCK_SIZE) {
             memset(docids->data + docids->size, 0,
                    BLOCK_SIZE - docids->size); // pad with 0s
-            // docids->size = BLOCK_SIZE; // set size to BLOCK_SIZE
+            docids->size = BLOCK_SIZE; // set size to BLOCK_SIZE
         }
         // pad impact score block with 0s so it is a full BLOCK_SIZE sized block
         if (scores->size < BLOCK_SIZE) {
             memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size);
-            // scores->size = BLOCK_SIZE; // set size to BLOCK_SIZE
+            scores->size = BLOCK_SIZE; // set size to BLOCK_SIZE
         }
         add_to_index(docids, current_block_number, blocks, findex);
         // printf("now adding scores to index\n");
