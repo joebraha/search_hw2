@@ -36,15 +36,11 @@ typedef struct {
     int compressed; // 0 or 1, whether the current docid block is compressed
     int *curr_d_block_uncompressed;
     int *curr_s_block_uncompressed; // scores are already uncompressed because they are always 1 byte or less
-    size_t curr_d_block_size; // also not sure if necessary
-    size_t curr_s_block_size; // not sure if necessary
 } ListPointer;
 
 // Define the structure for lexicon entries
 typedef struct {
     char term[MAX_WORD_SIZE];
-    int count;
-    int num_entries; // the number of entries for this word. In other words, the number of documents containing this word
     int start_d_block;
     size_t start_d_offset;
     size_t start_s_offset;
@@ -63,8 +59,6 @@ LexiconEntry *lexicon_table = NULL;
 // structure to keep track of postings list for a term
 typedef struct {
     char term[MAX_WORD_SIZE];
-    int count;
-    int num_entries;
     int start_d_block;
     size_t start_d_offset;
     size_t start_s_offset;
@@ -73,11 +67,10 @@ typedef struct {
     size_t last_s_offset;
     int last_did;
     int *last;
-    size_t num_blocks; // Number of blocks
+    size_t num_blocks;
     unsigned char *compressed_d_list;
     unsigned char *s_list; // already uncompressed bc we never compress it in the first place- always one byte 
     size_t compressed_d_list_size;
-    size_t s_list_size; // also not sure if we need this
 } PostingsList;
 
 // maintaining heap for top 10 results
@@ -142,30 +135,13 @@ LexiconEntry *get_metadata(const char *term) {
     return entry;
 }
 
-// *** seems to be actually just implementing OpenList but for all of them- oh
-// well get postings list from index file for each term in query
+// get compressed postings list from index file for each term in query
 size_t retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *postings_lists, FILE *index) {
     size_t valid_terms = 0;
-    // printf("Retrieving postings lists for query terms...\n");
     for (size_t i = 0; i < num_terms; i++) {
         // retrieving postings list for term i
-        // printf("\tRetrieving metadata for term: %s\n", terms[i]);
         LexiconEntry *metadata = get_metadata(terms[i]);
         if (metadata) {
-            // printf("\tMetadata retrieved for term: %s with frequency: %d\n", metadata->term, metadata->count);
-            // printf("\t\tNum entries: %d\n", metadata->num_entries);
-            // printf("\t\tStart d block: %d\n", metadata->start_d_block);
-            // printf("\t\tStart d offset: %zu\n", metadata->start_d_offset);
-            // printf("\t\tStart s offset: %zu\n", metadata->start_s_offset);
-            // printf("\t\tLast d block: %d\n", metadata->last_d_block);
-            // printf("\t\tLast d offset: %zu\n", metadata->last_d_offset);
-            // printf("\t\tLast s offset: %zu\n", metadata->last_s_offset);
-            // printf("\t\tLast did: %d\n", metadata->last_did);
-            // printf("\t\tNum blocks: %zu\n", metadata->num_blocks);
-            // printf("\t\tLast array:\n");
-            // for (size_t j = 0; j < metadata->num_blocks; j++) {
-            //     printf("\t\t\tLast[%zu]: %d\n", j, metadata->last[j]);
-            // }
             size_t d_start = metadata->start_d_offset; // the start offset to be updated as we move through blocks
             size_t s_start = metadata->start_s_offset; // same but for score blocks
 
@@ -182,37 +158,29 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *pos
             size_t s_offset = 0;
 
             for (int d = metadata->start_d_block; d <= metadata->last_d_block; d += 2) {
-                // printf("\t\tFetching compressed d block %d...\n", d);
                 // read in the docids and scores
                 int s = d + 1; // scores always stored in block after docids
-                // printf("\t\tFetching s block %d...\n", s);
                 size_t d_block_offset = (d * BLOCK_SIZE) + d_start; // actual location to seek to for the start of the docids
                 size_t s_block_offset = (s * BLOCK_SIZE) + s_start; // actual location to seek to for start of scores
                 if (d != metadata->last_d_block) {
                     // not the last block, read in from the offset to the end of the block
-                    // printf("\t\tReading in from d block offset: %zu to end of block\n", d_block_offset);
                     fseek(index, d_block_offset, SEEK_SET); // seek to start of docids in current block 
                     fread((postings_lists[valid_terms].compressed_d_list + d_offset), 1, (BLOCK_SIZE - d_start), index); // read in from start offset to end of block
                     d_offset += (BLOCK_SIZE - d_start); // incrementing by size of what we just added in
                     d_block_offset += (BLOCK_SIZE - d_start); // incrementing seek offset by size of what we just added in. updating where we start reading from in index file
                     d_start = 0; // reset start offset for next block - this is where we start reading in next block 
 
-                    // printf("\t\tReading in from s block offset: %zu to end of block\n", s_block_offset);
                     fseek(index, s_block_offset, SEEK_SET); // seek to start of scores in current block 
                     fread((postings_lists[valid_terms].s_list + s_offset), 1, (BLOCK_SIZE - s_start), index); // read in from start offset to end of block
                     s_offset += (BLOCK_SIZE - s_start); // incrementing like above
                     s_block_offset += (BLOCK_SIZE - s_start); // incrementing like above
                     s_start = 0; // reset start offset for next block
                 } else {
-                    // last or only block- only read in from start offset to
-                    // last offset
-                    // printf("\t\tLast or only block\n");
-                    // printf("\t\tReading in %zu bytes starting from d block offset: %zu to and ending at last d offset: %zu\n", (metadata->last_d_offset - d_start), d_block_offset, ((d * BLOCK_SIZE) + metadata->last_d_offset));
+                    // last or only block- only read in from start offset to last offset
                     fseek(index, d_block_offset, SEEK_SET);
                     fread((postings_lists[valid_terms].compressed_d_list + d_offset), 1, (metadata->last_d_offset - d_start), index);
                     d_offset += (metadata->last_d_offset - d_start);
 
-                    // printf("\t\tReading in %zu bytes starting from s block offset: %zu to and ending at last s offset: %zu\n", (metadata->last_s_offset - s_start), s_block_offset, ((s * BLOCK_SIZE) + metadata->last_s_offset));
                     fseek(index, s_block_offset, SEEK_SET);
                     fread((postings_lists[valid_terms].s_list + s_offset), 1, (metadata->last_s_offset - s_start), index);
                     s_offset += (metadata->last_s_offset - s_start);
@@ -221,8 +189,6 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *pos
 
             // Store the postings list and metadata
             strcpy(postings_lists[valid_terms].term, terms[i]);
-            postings_lists[valid_terms].count = metadata->count;
-            postings_lists[valid_terms].num_entries = metadata->num_entries;
             postings_lists[valid_terms].start_d_block = metadata->start_d_block;
             postings_lists[valid_terms].start_d_offset = metadata->start_d_offset;
             postings_lists[valid_terms].start_s_offset = metadata->start_s_offset;
@@ -231,7 +197,6 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *pos
             postings_lists[valid_terms].last_s_offset = metadata->last_s_offset;
             postings_lists[valid_terms].last_did = metadata->last_did;
             postings_lists[valid_terms].compressed_d_list_size = d_offset;
-            postings_lists[valid_terms].s_list_size = s_offset;
 
             // Copy the last array
             postings_lists[valid_terms].last = malloc(sizeof(int) * metadata->num_blocks);
@@ -242,9 +207,6 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *pos
             memcpy(postings_lists[valid_terms].last, metadata->last, sizeof(int) * metadata->num_blocks);
             postings_lists[valid_terms].num_blocks = metadata->num_blocks;
 
-            // printf("\tPostings list retrieved for term: %s with total frequency: %d\n", terms[i], metadata->count);
-            // printf("\t\tCompressed d list size: %zu\n", d_offset);
-            // printf("\t\ts list size: %zu\n", s_offset);
             valid_terms++;
 
         } else {
@@ -270,10 +232,6 @@ ListPointer *open_list(PostingsList *postings_list) {
     lp->compressed = 1;
     lp->curr_d_block_uncompressed = NULL;
     lp->curr_s_block_uncompressed = NULL;
-    // initializing first block size
-    lp->curr_d_block_size = 0; // will get updated every time we decompress a block
-    lp->curr_s_block_size = 0; // same // not sure we need this anymore
-
     return lp;
 }
 
@@ -288,8 +246,7 @@ void close_list(ListPointer *lp) {
     free(lp);
 }
 
-// Comparison function to compare the sizes of the compressed docIDs lists - to
-// be used in qsort
+// Comparison function to compare the sizes of the compressed docIDs lists - to be used in qsort
 int compare_postings_lists(const void *a, const void *b) {
     PostingsList *list_a = (PostingsList *)a;
     PostingsList *list_b = (PostingsList *)b;
@@ -312,44 +269,29 @@ size_t varbyte_decode(unsigned char *input, int *output) {
     }
 
     *output = value;
-    // printf("\t\t\t\t\tDecoded value: %d, Bytes read: %zu\n", value, i + 1);
     return i + 1; // Return the number of bytes read
 }
 
+// get the offset for the current docid block
 size_t get_d_block_offset(ListPointer *lp, PostingsList *postings_list) {
     size_t offset;
     if (lp->curr_block == 0) {
-        // first block, return 0
-        // this is the beginning of the compressed list
         offset = 0; 
     }
     else {
-        // if curr_block is block 3, then to get the offset,
-        // we need to add the size of the first irregularly sized block, block 0,
-        // + the regular block size of blocks 1 and 2, which is BLOCK_SIZE
-        // this is true for all blocks except the very first block, because we only care
-        // about where the block *starts* in the compressed list
-        // as we can identify the end of the block with the stored last_doc_id in the last array
         size_t block_0_size = BLOCK_SIZE - postings_list->start_d_offset;
         offset = block_0_size + ((lp->curr_block - 1) * BLOCK_SIZE);
     }
     return offset;
 }
 
+// get the offset for the current score block
 size_t get_s_block_offset(ListPointer *lp, PostingsList *postings_list) {
     size_t offset;
     if (lp->curr_block == 0) {
-        // first block, return 0
-        // this is the beginning of the score list
         offset = 0; 
     }
     else {
-        // if curr_block is block 3, then to get the offset,
-        // we need to add the size of the first irregularly sized block, block 0,
-        // + the regular block size of blocks 1 and 2, which is BLOCK_SIZE
-        // this is true for all blocks except the very first block, because we only care
-        // about where the block *starts* in the compressed list
-        // as we can identify the end of the block with the stored last_doc_id in the last array
         size_t block_0_size = BLOCK_SIZE - postings_list->start_s_offset;
         offset = block_0_size + ((lp->curr_block - 1) * BLOCK_SIZE);
     }
@@ -362,52 +304,30 @@ void decompress_block(ListPointer *lp, PostingsList *postings_list) {
     // decompress and write into uncompressed docid block in lp
     size_t offset = get_d_block_offset(lp, postings_list);
     size_t i = 0;
-    // printf("\t\t\t\tDecompressing docid block: %d \n", lp->curr_block);
-    // printf("\t\t\t\tInitial offset: %zu, Initial i: %zu\n", offset, i);
-    // printf("\t\t\t\tCurrent docid block size: %zu\n", lp->curr_d_block_size);
     int last_doc_id_in_block = postings_list->last[lp->curr_block];
-    // printf("\t\t\t\tLast docid in block: %d\n", last_doc_id_in_block);
-    // while (offset < lp->curr_d_block_size) {
     while (1) {
         size_t bytes_read = varbyte_decode(postings_list->compressed_d_list + offset, lp->curr_d_block_uncompressed + i);
-        // printf("\t\t\t\t\tBytes read: %zu, Value: %d\n", bytes_read, lp->curr_d_block_uncompressed[i]);
         offset += bytes_read;
         if (lp->curr_d_block_uncompressed[i] == last_doc_id_in_block) {
             i++;
-            // printf("\t\t\t\t\tFound last docid in block: %d\n", last_doc_id_in_block);
             break;
         }
         i++;
     }
-    // printf("\t\t\t\tTotal docid integers decompressed: %zu\n", i);
     
     // fetch block of scores from postings_list->s_list and store in uncompressed score block in lp
     offset = get_s_block_offset(lp, postings_list);
-    // printf("\t\t\t\tReading scores starting at offset: %zu\n", offset);
     for (size_t j = 0; j < i; j++) {
         lp->curr_s_block_uncompressed[j] = postings_list->s_list[offset + j];
-        // printf("Score byte %zu: %u\n", j, lp->curr_s_block_uncompressed[j]);
     }
-    // printf("\t\t\t\tTotal scores read: %zu\n", i);
-
-    // // Print the scores for debugging
-    // for (size_t j = 0; j < i; j++) {
-    //     printf("DocID: %d, Score: %u\n", lp->curr_d_block_uncompressed[j], lp->curr_s_block_uncompressed[j]);
-    // }
 }
-
-
-
 
 // function to get the next greatest or equal docID from a list
 int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
 
 
     // implement block by block nextGEQ using [last] array
-    // printf("\t\t\tDoing block by block search of [last] array to find block containing k: %d, starting at block %d\n", k, lp->curr_block);
     while (postings_list->last[lp->curr_block] < k) {
-        // printf("\t\t\t\tCurrent block's last docID: %d is less than k: %d\n", postings_list->last[lp->curr_block], k);
-        // printf("\t\t\t\tMoving to next block...\n");
         lp->curr_block++;
         lp->compressed = 1; // moving to new block, use this info to indicate that we should free the old uncompressed data
         lp->curr_posting = 0; // reset posting index to 0 for new block
@@ -420,10 +340,7 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
     }
 
     // at this point, lp->curr_block IS the block that contains the next greatest or equal docID
-    // printf("\t\t\tFound block %d with last docID greater than k: %d\n", lp->curr_block, postings_list->last[lp->curr_block]);
-
     if (lp->compressed) {
-        // printf("\t\t\tBlock is compressed.\n");
         // free the old uncompressed data if it exists, make room for new block to be uncompressed
         if (lp->curr_d_block_uncompressed) {
             free(lp->curr_d_block_uncompressed);
@@ -434,9 +351,6 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
             lp->curr_s_block_uncompressed = NULL;
         }        
 
-        // allocating space for worst case scenario- each byte in compressed
-        // block corresponds to single integer in uncompressed block
-        // printf("\t\t\tAllocating memory for uncompressed blocks...\n");
         size_t max_uncompressed_size = BLOCK_SIZE * 4; // allotting for extra space for uncompressed block of docids
         lp->curr_d_block_uncompressed = malloc(max_uncompressed_size * sizeof(int));
         lp->curr_s_block_uncompressed = malloc(BLOCK_SIZE * sizeof(int)); // one block of scores should be 64KB
@@ -445,30 +359,18 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
             exit(EXIT_FAILURE);
         }
 
-        // printf("\t\t\tDecompressing docid and score blocks...\n");
-        // storing number of ints retrieving from decompressing d block 
         decompress_block(lp, postings_list);
         lp->compressed = 0;
     }
 
-    // printf("\t\t\tBeginning traversal of decompressed block to find nextGEQ k: %d\n", k);
     // loop through current decompressed block to find next greatest or equal docID
     int last_doc_id_in_block = postings_list->last[lp->curr_block];
-    // printf("\t\t\tLast docID in block: %d\n", last_doc_id_in_block);
     while (1) {
-        // printf("\t\t\t\tChecking docID: %d\n", lp->curr_d_block_uncompressed[lp->curr_posting]);
         if (lp->curr_d_block_uncompressed[lp->curr_posting] >= k) {
-            // printf("\t\t\t\tFound nextGEQ docID: %d\n", lp->curr_d_block_uncompressed[lp->curr_posting]);
             lp->curr_doc_id = lp->curr_d_block_uncompressed[lp->curr_posting];
-            lp->curr_score = lp->curr_s_block_uncompressed[lp->curr_posting]; // Assuming scores are stored in curr_s_block_uncompressed
+            lp->curr_score = lp->curr_s_block_uncompressed[lp->curr_posting];
             return lp->curr_doc_id;
         }
-        // if (lp->curr_d_block_uncompressed[lp->curr_posting] == last_doc_id_in_block) {
-        //     // we have reached the end of the block
-        //     lp->curr_doc_id = lp->curr_d_block_uncompressed[lp->curr_posting];
-        //     return lp->curr_doc_id;
-        //     // break;
-        // }
         lp->curr_posting++;
     }
 
@@ -477,65 +379,47 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
 }
 
 int get_score(ListPointer **lp, int num_terms) {
-    // printf("\t\t\tCalculating BM25 score for docID: %d\n", lp[0]->curr_doc_id);
     int score = 0;
     for (int i = 0; i < num_terms; i++) {
-        // printf("\t\t\t\tTerm: %d, Score: %d\n", i, lp[i]->curr_score);
         score += lp[i]->curr_score;
-        // printf("\t\t\t\tCurrent score: %d\n", score);
     }
-    // printf("\t\t\tBM25 score for docID: %d is: %d\n", lp[0]->curr_doc_id, score);
     return score;
 }
 
 void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
 
     // step 1 - arrange the lists in order of increasing size of compressed docID lists
-    // printf("Starting DAAT retrieval...\n");
-    // printf("\tArranging postings lists in order of increasing size of compressed docID lists...\n");
     qsort(postings_lists, num_terms, sizeof(PostingsList), compare_postings_lists);
 
     // step 2 - open all lists, keep array of listpointers in order of shortest to largest docid list
     ListPointer *lp[num_terms];
     int i;
     for (i = 0; i < num_terms; i++) {
-        // printf("\tOpening list for term: %s\n", postings_lists[i].term);
         lp[i] = open_list(&postings_lists[i]);
-        // printf("\t\tList opened for term: %s\n", lp[i]->term);
     }
 
     int did = 0;
     int max_did = postings_lists[0].last_did; // this is the max docID in the shortest list
-    // printf("\tMax docID in shortest list: %d\n", max_did);
-    // printf("\tStarting traversal...\n");
 
     // step 3 - traversal
     while (did <= max_did) {
         // get next post from shortest list
-        // printf("\n\t\tGetting nextGEQ for docID: %d in shortest list- term %s\n", did, lp[0]->term);
         did = nextGEQ(lp[0], did, &postings_lists[0]);
-        // printf("\t\tNextGEQ for shortest list is docID: %d\n", did);
         // check if did is in all other lists, if not, check next greatest docID
         int d;
         size_t j;
-        // printf("\t\tChecking if docID is in all other lists...\n");
         for (j = 1; j < num_terms; j++) {
-            // printf("\t\t\tLooking at next term: j: %zu\n", j);
-            // printf("\t\t\tLooking for did: %d in term: %s\n", did, lp[j]->term);
             d = nextGEQ(lp[j], did, &postings_lists[j]);
             if (d != did) {
-                // printf("\t\t\tDocID: %d not found in term: %s. Break.\n", did, lp[j]->term);
                 break;
             }
         }
         if (num_terms == 1) {
             // if there is only one term, then we know that the docID are in "all" of the lists
             // we want to keep going along this list and find the top 10 BM25 scores
-            // printf("\t\tOnly one term in query. Continuing search for docID: %d\n", did);
             d = did;
         }
         if (d > did) {
-            // printf("\t\tDocID: %d not found in all lists. Checking next greatest docID.\n", did);
             // we know that the docID is not in all lists
             // check next greatest docID from next list
             did = d;
@@ -543,7 +427,6 @@ void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
             // if all the docids in the next shortest list are less than the first element in the shortest list, 
             // then we know that there are no documents that contain both terms 
             // search terminated early,
-            // printf("\t\tAll docIDs in next shortest list are less than current docID. Terminating search.\n");
             for (i = 0; i < num_terms; i++) {
                 close_list(lp[i]);
             }
@@ -551,17 +434,13 @@ void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
         } else {
             // we know that the docID is in all lists, or the only list
             // calculate BM25 score
-            // printf("\t\tDocID: %d found in all/only list/s. Calculating BM25 score.\n", did);
             int score = get_score(lp, num_terms);
             // insert into heap
-            // printf("\t\tInserting docID: %d with score: %d into heap.\n", did, score);
             insert(top_10, did, score);
-            // printf("\t\tScore inserted into heap. Checking next greatest docID.\n");
             // check next greatest docID from shortest list
             did++;
         }
     }
-    // printf("\tTraversal complete.\n");
     // step 4 - close all lists
     for (i = 0; i < num_terms; i++) {
         close_list(lp[i]);
@@ -577,14 +456,12 @@ int compare_list_pointers(const void *a, const void *b) {
 int find_lp_with_lowest_doc_id(ListPointer **lp, int num_terms, int max_doc_id) {
     int lowest_index = -1;
     int lowest_doc_id = max_doc_id + 1; // set to max doc id + 1 to ensure we find a lower doc id
-    // printf("\t\tFinding lowest docID among current docIDs- greatest possible value of docID is %d\n", lowest_doc_id);
     for (int i = 0; i < num_terms; i++) {
         if ((lp[i]->curr_doc_id != -1) && (lp[i]->curr_doc_id < lowest_doc_id)) {
             lowest_doc_id = lp[i]->curr_doc_id;
             lowest_index = i;
         }
     }
-    printf("\t\tLowest docID found: %d at index: %d for term %s\n", lowest_doc_id, lowest_index, lp[lowest_index]->term);
     return lowest_index;
 }
 
@@ -599,17 +476,13 @@ int ready_to_sum(ListPointer **lp, int num_terms, int did) {
 
 void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
 
-    printf("Starting DAAT retrieval...\n");
-
     int greatest_doc_id = postings_lists[0].last_did;
     ListPointer *lp[num_terms];
     int i;
     for (i = 0; i < num_terms; i++) {
         lp[i] = open_list(&postings_lists[i]);
-        printf("\tList opened for term: %s\n", lp[i]->term);
         // get first docID from each list
         lp[i]->curr_doc_id = nextGEQ(lp[i], 0, &postings_lists[i]);
-        printf("\t\tFirst docID in list: %d\n", lp[i]->curr_doc_id);
         if (postings_lists[i].last_did > greatest_doc_id) {
             // store greatest doc id out of all terms to limit search
             greatest_doc_id = postings_lists[i].last_did;
@@ -624,15 +497,11 @@ void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
     int score; // start with the score from the first list
     int lowest_doc_id_index;
 
-    // step 3 - traversal
     while (1) {
-        printf("\n\tCurrent docID: %d\n", did);
         if (ready_to_sum(lp, num_terms, did)) {
-            printf("\tAll current docids are greater than or equal to current docID: %d, ready to sum up scores.\n", did);
             // all docids are greater than or equal to did, ready to sum up scores
             score = 0; // reset score for new docID
             for (i = 0; i < num_terms; i++) {
-                printf("\t\tcurrent docid for term %s: %d\n", lp[i]->term, lp[i]->curr_doc_id);
                 if (lp[i]->curr_doc_id == did) {
                     score += lp[i]->curr_score; // add to score
                     if (lp[i]->curr_doc_id == postings_lists[i].last_did) {
@@ -640,93 +509,18 @@ void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
                     }
                 }
             }
-            printf("\tInserting docID: %d with score: %d into heap.\n", did, score);
             // insert score into heap 
             insert(top_10, did, score);
         }
 
-        printf("\tFinding lp index with lowest current docID...\n");
         lowest_doc_id_index = find_lp_with_lowest_doc_id(lp, num_terms, greatest_doc_id);
-        printf("\tLowest docID %d at lp index: %d\n", lp[lowest_doc_id_index]->curr_doc_id, lowest_doc_id_index);
         if (lowest_doc_id_index == -1) {
-            printf("\tNo more lists to check. Terminating search.\n");
             // no more lists to check
             break;
         }
         did = nextGEQ(lp[lowest_doc_id_index], (did + 1), &postings_lists[lowest_doc_id_index]);
 
     }
-
-    // // step 3 - traversal
-    // while (did <= greatest_doc_id) {
-    //     // check how many lists have the same docID
-    //     int is_min = 1;
-    //     for (i = 0; i < num_terms; i++) {
-    //         if ((lp[i]->curr_doc_id != -1) && (lp[i]->curr_doc_id < did)) {
-    //             // not all lists' current/valid docids are greater than or equal to did rn
-    //             // keep moving until this is the case
-    //             is_min = 0;
-    //             break;
-    //         }
-    //     }
-
-    //     if (is_min) {
-    //         // all docids are greater than or equal to did, ready to sum up scores
-    //         for (i = 0; i < num_terms; i++) {
-    //             // printf("\t\tChecking if docID: %d is in list: %s\n", did, lp[i]->term);
-    //             if (lp[i]->curr_doc_id == did) {
-    //                 score += lp[i]->curr_score; // add to score
-    //                 if (lp[i]->curr_doc_id == postings_lists[i].last_did) {
-    //                     lp[i]->curr_doc_id = -1; // no more docIDs in this list
-    //                     if (i == lowest_doc_id_index) {
-    //                         // if we just removed the lowest docID, we need to find the next lowest
-    //                         lowest_doc_id_index = (lowest_doc_id_index + 1) % num_terms; // move to next list
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         // insert score into heap 
-    //         insert(top_10, did, score);
-    //     }
-
-    //     while (1) {
-    //         // find list with lowest current docID and advance to next posting in just that list
-    //         // int lowest_doc_id_index = 0;
-    //         for (i = 0; i < num_terms; i++) {
-    //             if ((lp[i]->curr_doc_id != -1)  && (lp[i]->curr_doc_id < lp[lowest_doc_id_index]->curr_doc_id)) {
-    //                 lowest_doc_id_index = i;
-    //             }
-    //         }
-    //         // advance the lowest docID list
-    //         int prev_did = lp[lowest_doc_id_index]->curr_doc_id;
-    //         if (prev_did == - 1) {
-    //             // no more lists to check
-    //             break;
-    //         }
-    //         did = nextGEQ(lp[lowest_doc_id_index], (prev_did + 1), &postings_lists[lowest_doc_id_index]);
-    //         score = 0;
-    //         int diff = did - prev_did;
-    //         if (diff == 0) {
-    //             lp[lowest_doc_id_index]->curr_doc_id = -1; // no more docIDs in this list
-    //             lowest_doc_id_index = (lowest_doc_id_index + 1) % num_terms; // move to next list
-    //             if (lp[lowest_doc_id_index]->curr_doc_id == greatest_doc_id) {
-    //                 break;
-    //             }
-    //         }
-    //         else {
-    //             break; // we have a new docID to work with
-    //         }
-    //         // score = lp[lowest_doc_id_index]->curr_score; // reset score to the score of the new lowest docID
-    //     }
-    //     if (prev_did == -1) {
-    //         break; // no more docIDs to check
-    //     }
-    // }
-    // // printf("\tTraversal complete.\n");
-    // // step 4 - close all lists
-    // for (i = 0; i < num_terms; i++) {
-    //     close_list(lp[i]);
-    // }
 
     printf("\tTraversal complete.\n");
     for (i = 0; i < num_terms; i++) {
@@ -743,21 +537,19 @@ void load_lexicon(const char *filename) {
     }
 
     char term[MAX_WORD_SIZE];
-    int count, num_entries, last_did, start_d_block, last_d_block;
+    int last_did, start_d_block, last_d_block;
     size_t start_d_offset, start_s_offset, last_s_offset, last_d_offset, num_blocks;
 
-    while (fscanf(file, "%s %d %d %d %zu %zu %d %zu %zu %d %zu", term, &count,
-                  &num_entries, &start_d_block, &start_d_offset,
+    while (fscanf(file, "%s %d %zu %zu %d %zu %zu %d %zu", term,
+                  &start_d_block, &start_d_offset,
                   &start_s_offset, &last_d_block, &last_d_offset,
-                  &last_s_offset, &last_did, &num_blocks) == 11) {
+                  &last_s_offset, &last_did, &num_blocks) == 9) {
         LexiconEntry *entry = (LexiconEntry *)malloc(sizeof(LexiconEntry));
         if (!entry) {
             perror("Error allocating memory for lexicon entry");
             exit(EXIT_FAILURE);
         }
         strcpy(entry->term, term);
-        entry->count = count;
-        entry->num_entries = num_entries;
         entry->start_d_block = start_d_block;
         entry->start_d_offset = start_d_offset;
         entry->start_s_offset = start_s_offset;
@@ -785,7 +577,6 @@ void load_lexicon(const char *filename) {
             }
         }
 
-        // printf("%s %d\n", entry->term, entry->num_entries);
         // Add the entry to the hash table
         HASH_ADD_STR(lexicon_table, term, entry);
     }
@@ -801,8 +592,7 @@ void parse_term(char *term) {
     while (*src) {
         if (isalpha((unsigned char)*src)) {
             *dst++ = tolower((unsigned char)*src);
-            // checks if character is not alphbetic, makes lowercase, moves to
-            // next character
+            // checks if character is not alphbetic, makes lowercase, moves to next character
         }
         src++;
     }
@@ -859,7 +649,6 @@ int main(int argc, char *argv[]) {
             }
             term = strtok(NULL, " \t\n\r\f\v!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
         }
-        // NOTE: this currently doesn't deal well with any apostrophes, idk if we need to
 
         // Retrieve postings lists for all terms in query
         PostingsList postings_lists[num_terms];
