@@ -26,7 +26,7 @@ typedef struct {
     int last_d_block;      // the block number where the last did resides
     size_t last_d_offset;  // Offset within the block where the last docID is stored
     size_t last_s_offset;  // Offset within the block where the last impact score is stored
-    int last_did;          // the last docID in the block
+    int last_did;          // the last docID of the term
     int *last;             // Array to store the last docID in each block
     size_t num_blocks;     // Number of d blocks that the term's posting list spans
 } LexiconEntry;
@@ -310,8 +310,8 @@ void create_inverted_index(const char *sorted_file_path) {
                 current_entry.last_did = last_doc_id;
 
                 // insert current entry into lexicon
-                fprintf(flexi, "%s %d %zu %zu %d %zu %zu %d %zu",
-                        current_entry.term,
+                fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu",
+                        current_entry.term, current_entry.num_entries,
                         current_entry.start_d_block,
                         current_entry.start_d_offset,
                         current_entry.start_s_offset,
@@ -386,8 +386,8 @@ void create_inverted_index(const char *sorted_file_path) {
         current_entry.last_s_offset = scores->size;
         current_entry.last_d_block = current_block_number;
         current_entry.last_did = last_doc_id;
-        fprintf(flexi, "%s %d %zu %zu %d %zu %zu %d %zu",
-                current_entry.term, current_entry.start_d_block,
+        fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu",
+                current_entry.term, current_entry.num_entries, current_entry.start_d_block,
                 current_entry.start_d_offset, current_entry.start_s_offset,
                 current_entry.last_d_block, current_entry.last_d_offset,
                 current_entry.last_s_offset, current_entry.last_did,

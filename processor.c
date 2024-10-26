@@ -41,6 +41,7 @@ typedef struct {
 // Define the structure for lexicon entries
 typedef struct {
     char term[MAX_WORD_SIZE];
+    int num_entries;
     int start_d_block;
     size_t start_d_offset;
     size_t start_s_offset;
@@ -59,6 +60,7 @@ LexiconEntry *lexicon_table = NULL;
 // structure to keep track of postings list for a term
 typedef struct {
     char term[MAX_WORD_SIZE];
+    int num_entries;
     int start_d_block;
     size_t start_d_offset;
     size_t start_s_offset;
@@ -189,6 +191,7 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms, PostingsList *pos
 
             // Store the postings list and metadata
             strcpy(postings_lists[valid_terms].term, terms[i]);
+            postings_lists[valid_terms].num_entries = metadata->num_entries;
             postings_lists[valid_terms].start_d_block = metadata->start_d_block;
             postings_lists[valid_terms].start_d_offset = metadata->start_d_offset;
             postings_lists[valid_terms].start_s_offset = metadata->start_s_offset;
@@ -250,7 +253,7 @@ void close_list(ListPointer *lp) {
 int compare_postings_lists(const void *a, const void *b) {
     PostingsList *list_a = (PostingsList *)a;
     PostingsList *list_b = (PostingsList *)b;
-    return (list_a->compressed_d_list_size - list_b->compressed_d_list_size);
+    return (list_a->num_entries - list_b->num_entries);
 }
 
 size_t varbyte_decode(unsigned char *input, int *output) {
@@ -388,7 +391,7 @@ int get_score(ListPointer **lp, int num_terms) {
 
 void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
 
-    // step 1 - arrange the lists in order of increasing size of compressed docID lists
+    // step 1 - arrange the lists in order of increasing size of  docID lists
     qsort(postings_lists, num_terms, sizeof(PostingsList), compare_postings_lists);
 
     // step 2 - open all lists, keep array of listpointers in order of shortest to largest docid list
@@ -528,6 +531,16 @@ void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
     }
 }
 
+void free_lexicon() {
+    LexiconEntry *current_entry, *tmp;
+
+    HASH_ITER(hh, lexicon_table, current_entry, tmp) {
+        HASH_DEL(lexicon_table, current_entry);  // Delete the entry from the hash map
+        free(current_entry->last);         // Free the dynamically allocated array
+        free(current_entry);               // Free the entry itself
+    }
+}
+
 // load lexicon into memory for easy search of term metadata
 void load_lexicon(const char *filename) {
     FILE *file = fopen(filename, "r");
@@ -537,19 +550,20 @@ void load_lexicon(const char *filename) {
     }
 
     char term[MAX_WORD_SIZE];
-    int last_did, start_d_block, last_d_block;
+    int last_did, num_entries, start_d_block, last_d_block;
     size_t start_d_offset, start_s_offset, last_s_offset, last_d_offset, num_blocks;
 
-    while (fscanf(file, "%s %d %zu %zu %d %zu %zu %d %zu", term,
-                  &start_d_block, &start_d_offset,
+    while (fscanf(file, "%s %d %d %zu %zu %d %zu %zu %d %zu", term,
+                  &num_entries, &start_d_block, &start_d_offset,
                   &start_s_offset, &last_d_block, &last_d_offset,
-                  &last_s_offset, &last_did, &num_blocks) == 9) {
+                  &last_s_offset, &last_did, &num_blocks) == 10) {
         LexiconEntry *entry = (LexiconEntry *)malloc(sizeof(LexiconEntry));
         if (!entry) {
             perror("Error allocating memory for lexicon entry");
             exit(EXIT_FAILURE);
         }
         strcpy(entry->term, term);
+        entry->num_entries = num_entries;
         entry->start_d_block = start_d_block;
         entry->start_d_offset = start_d_offset;
         entry->start_s_offset = start_s_offset;
@@ -683,6 +697,7 @@ int main(int argc, char *argv[]) {
     printf("Goodbye!\n");
     // Close index file
     fclose(index);
+    free_lexicon();
 
     return 0;
 }
