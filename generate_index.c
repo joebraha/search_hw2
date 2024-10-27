@@ -1,14 +1,14 @@
+#include "uthash.h" // Include uthash
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "uthash.h" // Include uthash
 
 #define BLOCK_SIZE (size_t)65536 // 64KB
 #define MAX_WORD_SIZE (size_t)190
 #define INDEX_MEMORY_SIZE (size_t)(128 * 1024 * 1024) // 128MB
-#define MAX_BLOCKS 1000 // Maximum number of blocks for one term- overestimating 
+#define MAX_BLOCKS 1000 // Maximum number of blocks for one term- overestimating
 #define N_DOCUMENTS 8841823 // Number of documents in the collection
 
 typedef struct {
@@ -21,14 +21,18 @@ typedef struct {
     int count;
     int num_entries;       // number of documents containing this word
     int start_d_block;     // The block number where the first did resides
-    size_t start_d_offset; // Offset within the block where the first docID is stored
-    size_t start_s_offset; // Offset within the block where the first impact score is stored
+    size_t start_d_offset; // Offset within the block where the first docID is
+                           // stored
+    size_t start_s_offset; // Offset within the block where the first impact
+                           // score is stored
     int last_d_block;      // the block number where the last did resides
-    size_t last_d_offset;  // Offset within the block where the last docID is stored
-    size_t last_s_offset;  // Offset within the block where the last impact score is stored
-    int last_did;          // the last docID of the term
-    int *last;             // Array to store the last docID in each block
-    size_t num_blocks;     // Number of d blocks that the term's posting list spans
+    size_t
+        last_d_offset; // Offset within the block where the last docID is stored
+    size_t last_s_offset; // Offset within the block where the last impact score
+                          // is stored
+    int last_did;         // the last docID of the term
+    int *last;            // Array to store the last docID in each block
+    size_t num_blocks; // Number of d blocks that the term's posting list spans
 } LexiconEntry;
 
 typedef struct {
@@ -37,8 +41,8 @@ typedef struct {
 } CompressedData;
 
 typedef struct {
-    char *term;       // Key
-    int count;        // Value
+    char *term;        // Key
+    int count;         // Value
     UT_hash_handle hh; // Makes this structure hashable
 } TermEntry;
 
@@ -46,7 +50,6 @@ TermEntry *terms = NULL; // Hash table
 
 // Define the array for the docs table
 int *doc_table = NULL;
-
 
 // this function loads the document lengths from a file into memory
 void load_doc_lengths(const char *filename) {
@@ -67,7 +70,8 @@ void load_doc_lengths(const char *filename) {
     fclose(file);
 }
 
-// this function reads the words_out file and populates the terms hash table with the terms and their counts
+// this function reads the words_out file and populates the terms hash table
+// with the terms and their counts
 void read_words_out(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (!file) {
@@ -87,7 +91,8 @@ void read_words_out(const char *filename) {
     fclose(file);
 }
 
-// this function writes the all of the blocks in memory to the index file on disc
+// this function writes the all of the blocks in memory to the index file on
+// disc
 void pipe_to_file(MemoryBlock *blocks, FILE *file) {
     // Ensure the file is open
     if (!file) {
@@ -105,7 +110,6 @@ void pipe_to_file(MemoryBlock *blocks, FILE *file) {
     // Reset the blocks size
     blocks->size = 0;
 }
-
 
 // function to calculate BM25 score of a single word in a document
 double get_score(int freq, int doc_id, int num_entries) {
@@ -126,15 +130,15 @@ double get_score(int freq, int doc_id, int num_entries) {
     idf = log((numerator / denominator) + 1.0);
     score = (idf * tf);
 
-    // usually between 1 and 2, so scale by 100 and store the int value in a byte
+    // usually between 1 and 2, so scale by 100 and store the int value in a
+    // byte
     unsigned char ret = (unsigned char)(score * 100);
     return ret;
 }
 
-
 // this function takes in a memory block structure and either adds
-// it to the blocks array in memory or writes all of the blocks 
-// to disc to make room for the new block 
+// it to the blocks array in memory or writes all of the blocks
+// to disc to make room for the new block
 void add_to_index(MemoryBlock *block, int *current_block_number,
                   MemoryBlock *blocks, FILE *file) {
 
@@ -168,7 +172,7 @@ size_t varbyte_encode(int value, unsigned char *output) {
 void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
                     int count, int *current_block_number, MemoryBlock *blocks,
                     FILE *findex, LexiconEntry *current_entry) {
-    
+
     size_t compressed_doc_size;
     unsigned char compressed_doc_data[10];
 
@@ -178,13 +182,13 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
     // get score from for and add to frequencies
     unsigned char score = get_score(count, doc_id, current_entry->num_entries);
 
-
     if ((docids->size + compressed_doc_size) > BLOCK_SIZE) {
         // doc ids block is full, put docids block and scores block in index
         // pad docids block with 0s so it is a full BLOCK_SIZE sized block
         if (docids->size < BLOCK_SIZE) {
-            memset(docids->data + docids->size, 0, BLOCK_SIZE - docids->size); // pad with 0s
-            docids->size = BLOCK_SIZE; // set size to BLOCK_SIZE
+            memset(docids->data + docids->size, 0,
+                   BLOCK_SIZE - docids->size); // pad with 0s
+            docids->size = BLOCK_SIZE;         // set size to BLOCK_SIZE
         }
         // pad impact score block with 0s so it is a full BLOCK_SIZE sized block
         if (scores->size < BLOCK_SIZE) {
@@ -196,7 +200,8 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
         current_entry->num_blocks++;
     }
 
-    memcpy(docids->data + docids->size, compressed_doc_data, compressed_doc_size);
+    memcpy(docids->data + docids->size, compressed_doc_data,
+           compressed_doc_size);
     docids->size += compressed_doc_size;
     scores->data[scores->size++] = score;
 
@@ -228,8 +233,8 @@ void create_inverted_index(const char *sorted_file_path) {
         exit(EXIT_FAILURE);
     }
 
-    load_doc_lengths("docs_out.txt");
-    read_words_out("words_out.txt");
+    load_doc_lengths("parser/docs_out.txt");
+    read_words_out("parser/words_out.txt");
 
     // Allocate memory for blocks array- this will hold all the compressed
     // blocks we can fill before piping to file
@@ -271,7 +276,8 @@ void create_inverted_index(const char *sorted_file_path) {
     }
     scores->size = 0;
 
-    // initializing current block number, current term, word, and other variables
+    // initializing current block number, current term, word, and other
+    // variables
     int current_block_number = 0;
 
     char *current_term =
@@ -310,22 +316,22 @@ void create_inverted_index(const char *sorted_file_path) {
                 current_entry.last_did = last_doc_id;
 
                 // insert current entry into lexicon
-                fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu",
-                        current_entry.term, current_entry.num_entries,
-                        current_entry.start_d_block,
-                        current_entry.start_d_offset,
-                        current_entry.start_s_offset,
-                        current_entry.last_d_block, current_entry.last_d_offset,
-                        current_entry.last_s_offset, current_entry.last_did,
-                        current_entry.num_blocks);
+                fprintf(
+                    flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu",
+                    current_entry.term, current_entry.num_entries,
+                    current_entry.start_d_block, current_entry.start_d_offset,
+                    current_entry.start_s_offset, current_entry.last_d_block,
+                    current_entry.last_d_offset, current_entry.last_s_offset,
+                    current_entry.last_did, current_entry.num_blocks);
                 for (size_t i = 0; i <= current_entry.num_blocks; i++) {
                     fprintf(flexi, " %d", current_entry.last[i]);
                 }
                 fprintf(flexi, "\n");
 
-                // free current entry's allocated memory 
+                // free current entry's allocated memory
                 free(current_entry.term);
-                free(current_entry.last); // Free the memory allocated for the last array
+                free(current_entry
+                         .last); // Free the memory allocated for the last array
             }
 
             // update current posting list's term
@@ -335,27 +341,30 @@ void create_inverted_index(const char *sorted_file_path) {
             current_posting_did = doc_id;
             current_posting_count = 0;
 
-            // Initialize current_entry for new term 
-            memset(&current_entry, 0, sizeof(LexiconEntry)); // Zero out the memory of current_entry
+            // Initialize current_entry for new term
+            memset(
+                &current_entry, 0,
+                sizeof(LexiconEntry)); // Zero out the memory of current_entry
             current_entry.term = strdup(word);
             current_entry.start_d_block = current_block_number;
             current_entry.start_d_offset = docids->size;
             current_entry.start_s_offset = scores->size;
             current_entry.count = 0;
 
-            // Get the correct number of entries for the term so we can calculate impact scores
+            // Get the correct number of entries for the term so we can
+            // calculate impact scores
             TermEntry *term_entry;
             HASH_FIND_STR(terms, current_entry.term, term_entry);
             if (!term_entry) {
-                fprintf(stderr, "Term not found in words_out.txt: %s\n", current_entry.term);
+                fprintf(stderr, "Term not found in words_out.txt: %s\n",
+                        current_entry.term);
                 exit(EXIT_FAILURE);
             }
             current_entry.num_entries = term_entry->count;
 
             // Initialize the last array and num_blocks
-            current_entry.last = malloc(sizeof(int) * MAX_BLOCKS); 
+            current_entry.last = malloc(sizeof(int) * MAX_BLOCKS);
             current_entry.num_blocks = 0;
-
         }
 
         // not a new term
@@ -386,8 +395,8 @@ void create_inverted_index(const char *sorted_file_path) {
         current_entry.last_s_offset = scores->size;
         current_entry.last_d_block = current_block_number;
         current_entry.last_did = last_doc_id;
-        fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu",
-                current_entry.term, current_entry.num_entries, current_entry.start_d_block,
+        fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu", current_entry.term,
+                current_entry.num_entries, current_entry.start_d_block,
                 current_entry.start_d_offset, current_entry.start_s_offset,
                 current_entry.last_d_block, current_entry.last_d_offset,
                 current_entry.last_s_offset, current_entry.last_did,
@@ -408,7 +417,6 @@ void create_inverted_index(const char *sorted_file_path) {
 
     // Write remaining blocks array to file
     pipe_to_file(blocks, findex);
-
 
     // close files
     fclose(flexi);
