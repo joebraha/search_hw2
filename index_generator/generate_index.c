@@ -215,7 +215,7 @@ void create_inverted_index(const char *sorted_file_path) {
     // open sorted file
     FILE *fsorted_posts = fopen(sorted_file_path, "r");
     if (!fsorted_posts) {
-        perror("Error opening sorted_posts.txt");
+        perror("Error opening sorted posts file");
         exit(EXIT_FAILURE);
     }
 
@@ -233,8 +233,8 @@ void create_inverted_index(const char *sorted_file_path) {
         exit(EXIT_FAILURE);
     }
 
-    load_doc_lengths("parser/docs_out.txt");
-    read_words_out("parser/words_out.txt");
+    load_doc_lengths("docs_out.txt");
+    read_words_out("words_out.txt");
 
     // Allocate memory for blocks array- this will hold all the compressed
     // blocks we can fill before piping to file
