@@ -1,6 +1,13 @@
-/target
-notsofulldocs.tsv
 collection.tsv
-fulldocs.tsv
-testout*
 Cargo.lock
+
+/parser/target
+bck
+.clang-format
+.clangd
+braha2
+
+run/*
+!*/Makefile
+
+.DS_Store
