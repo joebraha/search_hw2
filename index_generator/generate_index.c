@@ -9,7 +9,7 @@
 #define MAX_WORD_SIZE (size_t)190
 #define INDEX_MEMORY_SIZE (size_t)(128 * 1024 * 1024) // 128MB
 #define MAX_BLOCKS 1000 // Maximum number of blocks for one term- overestimating
-#define N_DOCUMENTS 8841823 // Number of documents in the collection
+// #define N_DOCUMENTS 8841823 // Number of documents in the collection
 
 typedef struct {
     size_t size;
@@ -23,12 +23,12 @@ typedef struct {
     int start_d_block;     // The block number where the first did resides
     size_t start_d_offset; // Offset within the block where the first docID is
                            // stored
-    size_t start_s_offset; // Offset within the block where the first impact
-                           // score is stored
+    size_t start_f_offset; // Offset within the block where the first frequency
+                           // is stored
     int last_d_block;      // the block number where the last did resides
     size_t
         last_d_offset; // Offset within the block where the last docID is stored
-    size_t last_s_offset; // Offset within the block where the last impact score
+    size_t last_f_offset; // Offset within the block where the last frequency
                           // is stored
     int last_did;         // the last docID of the term
     int *last;            // Array to store the last docID in each block
@@ -48,27 +48,27 @@ typedef struct {
 
 TermEntry *terms = NULL; // Hash table
 
-// Define the array for the docs table
-int *doc_table = NULL;
+// // Define the array for the docs table
+// int *doc_table = NULL;
 
-// this function loads the document lengths from a file into memory
-void load_doc_lengths(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("Error opening document lengths file");
-        exit(EXIT_FAILURE);
-    }
+// // this function loads the document lengths from a file into memory
+// void load_doc_lengths(const char *filename) {
+//     FILE *file = fopen(filename, "r");
+//     if (!file) {
+//         perror("Error opening document lengths file");
+//         exit(EXIT_FAILURE);
+//     }
 
-    doc_table = (int *)malloc(N_DOCUMENTS * sizeof(int));
+//     doc_table = (int *)malloc(N_DOCUMENTS * sizeof(int));
 
-    int doc_id;
-    int doc_length;
-    while (fscanf(file, "%d %d", &doc_id, &doc_length) == 2) {
-        doc_table[doc_id] = doc_length;
-    }
+//     int doc_id;
+//     int doc_length;
+//     while (fscanf(file, "%d %d", &doc_id, &doc_length) == 2) {
+//         doc_table[doc_id] = doc_length;
+//     }
 
-    fclose(file);
-}
+//     fclose(file);
+// }
 
 // this function reads the words_out file and populates the terms hash table
 // with the terms and their counts
@@ -111,30 +111,30 @@ void pipe_to_file(MemoryBlock *blocks, FILE *file) {
     blocks->size = 0;
 }
 
-// function to calculate BM25 score of a single word in a document
-double get_score(int freq, int doc_id, int num_entries) {
-    double k1 = 1.2;               // free parameter
-    double b = 0.75;               // free parameter
-    double avg_doc_length = 66.93; // average document length
-    int d = doc_table[doc_id];     // length of this document
+// // function to calculate BM25 score of a single word in a document
+// double get_score(int freq, int doc_id, int num_entries) {
+//     double k1 = 1.2;               // free parameter
+//     double b = 0.75;               // free parameter
+//     double avg_doc_length = 66.93; // average document length
+//     int d = doc_table[doc_id];     // length of this document
 
-    double score;
-    int f = freq; // term frequency in this document
-    double tf = 0.0;
-    double numerator = f * (k1 + 1.0);
-    double denominator = f + k1 * (1.0 - b + b * (d / avg_doc_length));
-    tf = numerator / denominator;
-    double idf;
-    denominator = num_entries + 0.5;
-    numerator = N_DOCUMENTS - num_entries + 0.5;
-    idf = log((numerator / denominator) + 1.0);
-    score = (idf * tf);
+//     double score;
+//     int f = freq; // term frequency in this document
+//     double tf = 0.0;
+//     double numerator = f * (k1 + 1.0);
+//     double denominator = f + k1 * (1.0 - b + b * (d / avg_doc_length));
+//     tf = numerator / denominator;
+//     double idf;
+//     denominator = num_entries + 0.5;
+//     numerator = N_DOCUMENTS - num_entries + 0.5;
+//     idf = log((numerator / denominator) + 1.0);
+//     score = (idf * tf);
 
-    // usually between 1 and 2, so scale by 100 and store the int value in a
-    // byte
-    unsigned char ret = (unsigned char)(score * 100);
-    return ret;
-}
+//     // usually between 1 and 2, so scale by 100 and store the int value in a
+//     // byte
+//     unsigned char ret = (unsigned char)(score * 100);
+//     return ret;
+// }
 
 // this function takes in a memory block structure and either adds
 // it to the blocks array in memory or writes all of the blocks
@@ -168,44 +168,50 @@ size_t varbyte_encode(int value, unsigned char *output) {
 }
 
 // this function takes a doc_id and count, compresses the doc_id,
-// calculates the impact score, and adds both to the appropriate blocks
-void insert_posting(MemoryBlock *docids, MemoryBlock *scores, int doc_id,
+// compresses the scor, and adds both to the appropriate blocks
+void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
                     int count, int *current_block_number, MemoryBlock *blocks,
                     FILE *findex, LexiconEntry *current_entry) {
 
-    size_t compressed_doc_size;
+    size_t compressed_doc_size, compressed_freq_size;
     unsigned char compressed_doc_data[10];
+    unsigned char compressed_freq_data[10];
 
     // compress doc_id and add to docids
     compressed_doc_size = varbyte_encode(doc_id, compressed_doc_data);
 
-    // get score from for and add to frequencies
-    unsigned char score = get_score(count, doc_id, current_entry->num_entries);
+    // compress count and add to freqs
+    compressed_freq_size = varbyte_encode(count, compressed_freq_data);
 
     if ((docids->size + compressed_doc_size) > BLOCK_SIZE) {
-        // doc ids block is full, put docids block and scores block in index
+        // *** now that we aren't doing impact scores here anymore, should we also check for overflowing the frequencies block?
+        // doc ids block is full, put docids block and freqs block in index
         // pad docids block with 0s so it is a full BLOCK_SIZE sized block
         if (docids->size < BLOCK_SIZE) {
             memset(docids->data + docids->size, 0,
                    BLOCK_SIZE - docids->size); // pad with 0s
             docids->size = BLOCK_SIZE;         // set size to BLOCK_SIZE
         }
-        // pad impact score block with 0s so it is a full BLOCK_SIZE sized block
-        if (scores->size < BLOCK_SIZE) {
-            memset(scores->data + scores->size, 0, BLOCK_SIZE - scores->size);
-            scores->size = BLOCK_SIZE; // set size to BLOCK_SIZE
+        // pad frequency block with 0s so it is a full BLOCK_SIZE sized block
+        if (freqs->size < BLOCK_SIZE) {
+            memset(freqs->data + freqs->size, 0, BLOCK_SIZE - freqs->size);
+            freqs->size = BLOCK_SIZE; // set size to BLOCK_SIZE
         }
         add_to_index(docids, current_block_number, blocks, findex);
-        add_to_index(scores, current_block_number, blocks, findex);
+        add_to_index(freqs, current_block_number, blocks, findex);
         current_entry->num_blocks++;
     }
 
+    // add compressed docid and freq to docids and freqs blocks
     memcpy(docids->data + docids->size, compressed_doc_data,
            compressed_doc_size);
     docids->size += compressed_doc_size;
-    scores->data[scores->size++] = score;
+    // freqs->data[freqs->size++] = score;
+    memcpy(freqs->data + freqs->size, compressed_freq_data,
+           compressed_freq_size);
+    freqs->size += compressed_freq_size;
 
-    // Add the last inserted docID to the last array
+    // Add the last inserted docID to the last array (updating)
     current_entry->last[current_entry->num_blocks] = doc_id;
 }
 
@@ -233,7 +239,7 @@ void create_inverted_index(const char *sorted_file_path) {
         exit(EXIT_FAILURE);
     }
 
-    load_doc_lengths("docs_out.txt");
+    // load_doc_lengths("docs_out.txt");
     read_words_out("words_out.txt");
 
     // Allocate memory for blocks array- this will hold all the compressed
@@ -263,18 +269,18 @@ void create_inverted_index(const char *sorted_file_path) {
     }
     docids->size = 0;
 
-    // block size buffer for impact scores
-    MemoryBlock *scores = malloc(sizeof(MemoryBlock));
-    if (!scores) {
-        perror("Error allocating memory for scores");
+    // block size buffer for frequencies
+    MemoryBlock *freqs = malloc(sizeof(MemoryBlock));
+    if (!freqs) {
+        perror("Error allocating memory for frequencies");
         exit(EXIT_FAILURE);
     }
-    scores->data = malloc(BLOCK_SIZE);
-    if (!scores->data) {
-        perror("Error allocating memory for scores->data");
+    freqs->data = malloc(BLOCK_SIZE);
+    if (!freqs->data) {
+        perror("Error allocating memory for freqs->data");
         exit(EXIT_FAILURE);
     }
-    scores->size = 0;
+    freqs->size = 0;
 
     // initializing current block number, current term, word, and other
     // variables
@@ -299,7 +305,7 @@ void create_inverted_index(const char *sorted_file_path) {
     LexiconEntry current_entry;
     memset(&current_entry, 0, sizeof(LexiconEntry));
 
-    printf("Allocated memory for blocks, docids, and scores\n");
+    printf("Allocated memory for blocks, docids, and frequencies\n");
     printf("Starting to read sorted_posts.txt\n");
 
     while (fscanf(fsorted_posts, "%s %d %d\n", word, &doc_id, &count) != EOF) {
@@ -307,11 +313,11 @@ void create_inverted_index(const char *sorted_file_path) {
             if (current_entry.term != NULL && current_entry.term[0] != '\0') {
                 // encountering next term
                 // insert current posting before moving onto next
-                insert_posting(docids, scores, current_posting_did,
+                insert_posting(docids, freqs, current_posting_did,
                                current_posting_count, &current_block_number,
                                blocks, findex, &current_entry);
                 current_entry.last_d_offset = docids->size;
-                current_entry.last_s_offset = scores->size;
+                current_entry.last_f_offset = freqs->size;
                 current_entry.last_d_block = current_block_number;
                 current_entry.last_did = last_doc_id;
 
@@ -320,8 +326,8 @@ void create_inverted_index(const char *sorted_file_path) {
                     flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu",
                     current_entry.term, current_entry.num_entries,
                     current_entry.start_d_block, current_entry.start_d_offset,
-                    current_entry.start_s_offset, current_entry.last_d_block,
-                    current_entry.last_d_offset, current_entry.last_s_offset,
+                    current_entry.start_f_offset, current_entry.last_d_block,
+                    current_entry.last_d_offset, current_entry.last_f_offset,
                     current_entry.last_did, current_entry.num_blocks);
                 for (size_t i = 0; i <= current_entry.num_blocks; i++) {
                     fprintf(flexi, " %d", current_entry.last[i]);
@@ -348,11 +354,11 @@ void create_inverted_index(const char *sorted_file_path) {
             current_entry.term = strdup(word);
             current_entry.start_d_block = current_block_number;
             current_entry.start_d_offset = docids->size;
-            current_entry.start_s_offset = scores->size;
+            current_entry.start_f_offset = freqs->size;
             current_entry.count = 0;
 
             // Get the correct number of entries for the term so we can
-            // calculate impact scores
+            // calculate impact scores later
             TermEntry *term_entry;
             HASH_FIND_STR(terms, current_entry.term, term_entry);
             if (!term_entry) {
@@ -370,7 +376,7 @@ void create_inverted_index(const char *sorted_file_path) {
         // not a new term
         if (doc_id != current_posting_did) {
             // moved onto next posting in postings list
-            insert_posting(docids, scores, current_posting_did,
+            insert_posting(docids, freqs, current_posting_did,
                            current_posting_count, &current_block_number, blocks,
                            findex, &current_entry);
             // Update current_posting_did and current_posting_count
@@ -386,20 +392,20 @@ void create_inverted_index(const char *sorted_file_path) {
     }
 
     // add very last posting to docids and frequencies
-    insert_posting(docids, scores, current_posting_did, current_posting_count,
+    insert_posting(docids, freqs, current_posting_did, current_posting_count,
                    &current_block_number, blocks, findex, &current_entry);
 
     // fill in lexicon values for last term
     if (current_entry.term != NULL && current_entry.term[0] != '\0') {
         current_entry.last_d_offset = docids->size;
-        current_entry.last_s_offset = scores->size;
+        current_entry.last_f_offset = freqs->size;
         current_entry.last_d_block = current_block_number;
         current_entry.last_did = last_doc_id;
         fprintf(flexi, "%s %d %d %zu %zu %d %zu %zu %d %zu", current_entry.term,
                 current_entry.num_entries, current_entry.start_d_block,
-                current_entry.start_d_offset, current_entry.start_s_offset,
+                current_entry.start_d_offset, current_entry.start_f_offset,
                 current_entry.last_d_block, current_entry.last_d_offset,
-                current_entry.last_s_offset, current_entry.last_did,
+                current_entry.last_f_offset, current_entry.last_did,
                 current_entry.num_blocks);
         for (size_t i = 0; i <= current_entry.num_blocks; i++) {
             fprintf(flexi, " %d", current_entry.last[i]);
@@ -409,10 +415,10 @@ void create_inverted_index(const char *sorted_file_path) {
         free(current_entry.last);
     }
 
-    // write the last blocks of docids and scores to the blocks array
-    if (scores->size > 0 && docids->size > 0) {
+    // write the last blocks of docids and freqs to the blocks array
+    if (freqs->size > 0 && docids->size > 0) {
         add_to_index(docids, &current_block_number, blocks, findex);
-        add_to_index(scores, &current_block_number, blocks, findex);
+        add_to_index(freqs, &current_block_number, blocks, findex);
     }
 
     // Write remaining blocks array to file
@@ -426,8 +432,8 @@ void create_inverted_index(const char *sorted_file_path) {
     // free buffers and blocks
     free(current_term);
     free(word);
-    free(scores->data);
-    free(scores);
+    free(freqs->data);
+    free(freqs);
     free(docids->data);
     free(docids);
     free(blocks->data);
