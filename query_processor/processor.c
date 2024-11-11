@@ -8,7 +8,7 @@
 
 #define MAX_WORD_SIZE (size_t)190
 #define MAX_TERMS 20
-#define HEAP_SIZE 10
+// #define HEAP_SIZE 10
 #define BLOCK_SIZE (size_t)65536 // 64KB
 #define MAX_BLOCKS                                                             \
     1000 // Maximum number of blocks for one term- need to check this
@@ -19,7 +19,7 @@
 #define CONJUNCTIVE 1
 #define DISJUNCTIVE 2
 
-// define structures for min heap to store top 10 results
+// define structures for min heap to store top k results
 typedef struct {
     int doc_id;
     double score;
@@ -84,7 +84,7 @@ typedef struct {
     // size_t compressed_d_list_size; // do not think we need this
 } PostingsList;
 
-// maintaining heap for top 10 results
+// maintaining heap for top k results
 void init_min_heap(MinHeap *heap, size_t capacity) {
     heap->nodes = (HeapNode *)malloc(capacity * sizeof(HeapNode));
     heap->size = 0;
@@ -126,7 +126,7 @@ void heapify(MinHeap *heap, int i) {
 // function to insert a node into the heap- IF it is greater than the minimum
 // value in the heap
 void insert(MinHeap *heap, int doc_id, double score) {
-    if (heap->size < HEAP_SIZE) {
+    if (heap->size < heap->capacity) {
         // Insert new node at the end
         // if the heap is not yet full, just add the new node
         heap->nodes[heap->size].doc_id = doc_id;
@@ -171,7 +171,7 @@ void print_top_k(MinHeap *heap) {
     // Print the sorted array
     printf("Top %zu results:\n", heap->size);
     for (size_t i = 0; i < heap->size; i++) {
-        printf("DocID: %d, Score: %.2f\n", sorted_nodes[i].doc_id, sorted_nodes[i].score);
+        printf("%zu. DocID: %d, Score: %.2f\n", (i + 1), sorted_nodes[i].doc_id, sorted_nodes[i].score);
     }
 }
 
@@ -594,7 +594,7 @@ int calculate_score(ListPointer **lp, int num_terms) {
     return score;
 }
 
-void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
+void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_k) {
 
     // printf("Starting DAAT retrieval...\n");
     // printf("\tArranging postings lists in order of increasing size of compressed docID lists...\n");
@@ -641,7 +641,7 @@ void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
         if (num_terms == 1) {
             // if there is only one term, then we know that the docID are in
             // "all" of the lists we want to keep going along this list and find
-            // the top 10 BM25 scores
+            // the top k BM25 scores
             // printf("\t\tOnly one term in query. Continuing search for docID: %d\n", did);
             d = did;
         }
@@ -666,7 +666,7 @@ void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
             double score = calculate_score(lp, num_terms);
             // insert into heap
             // printf("\t\tInserting docID: %d with score: %f into heap.\n", did, score);
-            insert(top_10, did, score);
+            insert(top_k, did, score);
             // printf("\t\tScore inserted into heap. Checking next greatest docID.\n");
             // check next greatest docID from shortest list
             did++;
@@ -698,29 +698,42 @@ int find_lp_with_lowest_doc_id(ListPointer **lp, int num_terms,
             lowest_index = i;
         }
     }
+    // printf("\t\tLowest docID found: %d at index: %d for term %s\n", lowest_doc_id, lowest_index, lp[lowest_index]->term);
     return lowest_index;
 }
 
-int ready_to_sum(ListPointer **lp, int num_terms, int did) {
-    for (int i = 0; i < num_terms; i++) {
-        if ((lp[i]->curr_doc_id != -1) && (lp[i]->curr_doc_id < did)) {
-            return 0; // not all lists' current/valid docids are greater than or
-                      // equal to did
-        }
-    }
-    return 1; // all lists' current/valid docids are greater than or equal to
-              // did
-}
+// int ready_to_sum(ListPointer **lp, int num_terms, int did) {
+//     // printf("\t\tChecking if we are ready to sum scores for docid: %d\n", did);
+//     for (int i = 0; i < num_terms; i++) {
+//         // printf("\t\t\tIn list for term %s, current doc id is: %d\n", lp[i]->term, lp[i]->curr_doc_id);
+//         if ((lp[i]->curr_doc_id != -1) && (lp[i]->curr_doc_id < did)) {
+//             // if (lp[i]->curr_doc_id != -1) {
+//             //     printf("\t\t\t\tcurrent docid not equal to -1\n");
+//             // }
+//             // if (lp[i]->curr_doc_id < did) {
+//             //     printf("\t\t\t\tcurrent docid %d is less than did %d\n", lp[i]->curr_doc_id, did);
+//             // }
+//             // printf("\t\t\treturning false\n");
+//             return 0; // not all lists' current/valid docids are greater than or
+//                       // equal to did
+//         }
+//     }
+//     return 1; // all lists' current/valid docids are greater than or equal to
+//               // did
+// }
 
-void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
+void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_k) {
 
+    // printf("Starting DAAT retrieval...\n");
     int greatest_doc_id = postings_lists[0].last_did;
     ListPointer *lp[num_terms];
     int i;
     for (i = 0; i < num_terms; i++) {
         lp[i] = open_list(&postings_lists[i]);
+        // printf("\tList opened for term: %s\n", lp[i]->term);
         // get first docID from each list
         lp[i]->curr_doc_id = nextGEQ(lp[i], 0, &postings_lists[i]);
+        // printf("\t\tFirst docID in list: %d\n", lp[i]->curr_doc_id);
         if (postings_lists[i].last_did > greatest_doc_id) {
             // store greatest doc id out of all terms to limit search
             greatest_doc_id = postings_lists[i].last_did;
@@ -732,35 +745,81 @@ void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_10) {
     qsort(lp, num_terms, sizeof(ListPointer *), compare_list_pointers);
 
     int did = lp[0]->curr_doc_id; // start with the lowest docID
+    // int did = -1;
+    int tmp;
     double score;                    // start with the score from the first list
-    int lowest_doc_id_index;
+    int lowest_doc_id_index = 0;
 
     while (1) {
-        if (ready_to_sum(lp, num_terms, did)) {
-            // all docids are greater than or equal to did, ready to sum up
-            // scores
-            score = 0; // reset score for new docID
-            for (i = 0; i < num_terms; i++) {
-                if (lp[i]->curr_doc_id == did) {
-                    score += get_score(lp[i]->curr_freq, lp[i]->curr_doc_id, lp[i]->num_entries); // add to score
-                    if (lp[i]->curr_doc_id == postings_lists[i].last_did) {
-                        lp[i]->curr_doc_id = -1; // no more docIDs in this list
-                    }
+        // printf("\n\tAll current docids are greater than or equal to current docID: %d, ready to sum up scores.\n", did);
+        // all docids are greater than or equal to did, ready to sum up  scores
+        score = 0; // reset score for new docID
+        for (i = 0; i < num_terms; i++) {
+            // printf("\t\tcurrent docid for term %s: %d\n", lp[i]->term, lp[i]->curr_doc_id);
+            if (lp[i]->curr_doc_id == did) {
+                score += get_score(lp[i]->curr_freq, lp[i]->curr_doc_id, lp[i]->num_entries); // add to score
+                // printf("\t\t\tadding %f to current score\n", score);
+                if (lp[i]->curr_doc_id == postings_lists[i].last_did) {
+                    lp[i]->curr_doc_id = -1; // no more docIDs in this list
+                }
+                else {
+                    // move along after summing
+                    tmp = nextGEQ(lp[i], (lp[i]->curr_doc_id + 1), &postings_lists[i]);
                 }
             }
-            // insert score into heap
-            insert(top_10, did, score);
         }
+        
+        // printf("\tInserting docID: %d with score: %f into heap.\n", did, score);
+        // insert score into heap
+        insert(top_k, did, score);
 
-        lowest_doc_id_index =
-            find_lp_with_lowest_doc_id(lp, num_terms, greatest_doc_id);
+        // advance posting list with lowest current docID
+        // printf("\tFinding lp index with lowest current docID...\n");
+        lowest_doc_id_index = find_lp_with_lowest_doc_id(lp, num_terms, greatest_doc_id);
+        // printf("\tLowest docID %d at lp index: %d for term %s\n", lp[lowest_doc_id_index]->curr_doc_id, lowest_doc_id_index, lp[lowest_doc_id_index]->term);
         if (lowest_doc_id_index == -1) {
+            // printf("\tNo more lists to check. Terminating search.\n");
             // no more lists to check
             break;
         }
-        did = nextGEQ(lp[lowest_doc_id_index], (did + 1),
-                      &postings_lists[lowest_doc_id_index]);
+        did = lp[lowest_doc_id_index]->curr_doc_id;
+
+        // }
     }
+
+    // while (1) {
+    //     printf("\n\tCurrent docID: %d\n", did);
+    //     if (ready_to_sum(lp, num_terms, did)) {
+    //         printf("\tAll current docids are greater than or equal to current docID: %d, ready to sum up scores.\n", did);
+    //         // all docids are greater than or equal to did, ready to sum up
+    //         // scores
+    //         score = 0; // reset score for new docID
+    //         for (i = 0; i < num_terms; i++) {
+    //             printf("\t\tcurrent docid for term %s: %d\n", lp[i]->term, lp[i]->curr_doc_id);
+    //             if (lp[i]->curr_doc_id == did) {
+    //                 score += get_score(lp[i]->curr_freq, lp[i]->curr_doc_id, lp[i]->num_entries); // add to score
+    //                 if (lp[i]->curr_doc_id == postings_lists[i].last_did) {
+    //                     lp[i]->curr_doc_id = -1; // no more docIDs in this list
+    //                 }
+    //             }
+    //         }
+    //         printf("\tInserting docID: %d with score: %f into heap.\n", did, score);
+    //         // insert score into heap
+    //         insert(top_k, did, score);
+    //     }
+    //     printf("\tFinding lp index with lowest current docID...\n");
+    //     lowest_doc_id_index =
+    //         find_lp_with_lowest_doc_id(lp, num_terms, greatest_doc_id);
+    //     printf("\tLowest docID %d at lp index: %d\n", lp[lowest_doc_id_index]->curr_doc_id, lowest_doc_id_index);
+    //     if (lowest_doc_id_index == -1) {
+    //         printf("\tNo more lists to check. Terminating search.\n");
+    //         // no more lists to check
+    //         break;
+    //     }
+    //     did = nextGEQ(lp[lowest_doc_id_index], (did + 1),
+    //                   &postings_lists[lowest_doc_id_index]);
+    //     printf("\tNext docid to check for term %s: %d\n", lp[lowest_doc_id_index]->term, did);
+    // }
 
     // printf("\tTraversal complete.\n");
     for (i = 0; i < num_terms; i++) {
@@ -868,7 +927,7 @@ int main(int argc, char *argv[]) {
     
     // read in the desired number of results from the command line before accepting search modes/queries
     size_t heap_size;
-    printf("Enter heap size (desired number of search results): ");
+    printf("\nEnter heap size (desired number of search results): ");
     if (scanf("%zu", &heap_size) != 1 || heap_size <= 0) {
         printf("Invalid heap size. Exiting.\n");
         exit(EXIT_FAILURE);
@@ -901,7 +960,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Prompt for query terms
-        printf("Enter query: ");
+        printf("\nEnter query: ");
         if (fgets(query, sizeof(query), stdin) == NULL) {
             break; // Exit on EOF or error
         }
