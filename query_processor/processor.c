@@ -26,8 +26,9 @@ typedef struct {
 } HeapNode;
 
 typedef struct {
-    HeapNode nodes[HEAP_SIZE];
-    int size;
+    HeapNode *nodes;
+    size_t size;
+    size_t capacity;
 } MinHeap;
 
 // define structure for a list pointer
@@ -80,10 +81,21 @@ typedef struct {
     size_t num_blocks;
     unsigned char *compressed_d_list;
     unsigned char *compressed_f_list;
-    size_t compressed_d_list_size; // do not think we need this
+    // size_t compressed_d_list_size; // do not think we need this
 } PostingsList;
 
 // maintaining heap for top 10 results
+void init_min_heap(MinHeap *heap, size_t capacity) {
+    heap->nodes = (HeapNode *)malloc(capacity * sizeof(HeapNode));
+    heap->size = 0;
+    heap->capacity = capacity;
+}
+
+// free after use
+void free_min_heap(MinHeap *heap) {
+    free(heap->nodes);
+}
+
 // swap needed to implement heapify
 void swap(HeapNode *a, HeapNode *b) {
     HeapNode temp = *a;
@@ -145,8 +157,8 @@ int compare_scores(const void *a, const void *b) {
     return (score_b > score_a) - (score_b < score_a); // Descending order
 }
 
-// Function to print the top 10 results
-void print_top_10(MinHeap *heap) {
+// Function to print the top k results
+void print_top_k(MinHeap *heap) {
     // Create an array to store the heap elements
     HeapNode sorted_nodes[heap->size];
     for (size_t i = 0; i < heap->size; i++) {
@@ -157,7 +169,7 @@ void print_top_10(MinHeap *heap) {
     qsort(sorted_nodes, heap->size, sizeof(HeapNode), compare_scores);
 
     // Print the sorted array
-    printf("Top 10 results:\n");
+    printf("Top %zu results:\n", heap->size);
     for (size_t i = 0; i < heap->size; i++) {
         printf("DocID: %d, Score: %.2f\n", sorted_nodes[i].doc_id, sorted_nodes[i].score);
     }
@@ -295,7 +307,7 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms,
             postings_lists[valid_terms].last_d_offset = metadata->last_d_offset;
             postings_lists[valid_terms].last_f_offset = metadata->last_f_offset;
             postings_lists[valid_terms].last_did = metadata->last_did;
-            postings_lists[valid_terms].compressed_d_list_size = d_offset; // again not sure if needed
+            // postings_lists[valid_terms].compressed_d_list_size = d_offset; // again not sure if needed
 
             // Copy the last array
             postings_lists[valid_terms].last =
@@ -853,6 +865,15 @@ int main(int argc, char *argv[]) {
 
     char search_mode_input[10];
     char query[1024];
+    
+    // read in the desired number of results from the command line before accepting search modes/queries
+    size_t heap_size;
+    printf("Enter heap size (desired number of search results): ");
+    if (scanf("%zu", &heap_size) != 1 || heap_size <= 0) {
+        printf("Invalid heap size. Exiting.\n");
+        exit(EXIT_FAILURE);
+    }
+    getchar(); // Consume the newline character left by scanf
 
     while (1) {
         // Prompt for search mode
@@ -908,22 +929,19 @@ int main(int argc, char *argv[]) {
             continue; // Query invalid, try again with new query
         }
         // Perform DAAT traversal
-        // initialize top-10 heap
-        MinHeap top_10 = {.size = 0};
+        // initialize top-k heap
+        MinHeap top_k;
+        init_min_heap(&top_k, heap_size);
         printf("Performing search on %zu valid terms...\n", valid_terms);
         if (search_mode == CONJUNCTIVE) {
-            c_DAAT(postings_lists, valid_terms, &top_10);
+            c_DAAT(postings_lists, valid_terms, &top_k);
         } else {
-            d_DAAT(postings_lists, valid_terms, &top_10);
+            d_DAAT(postings_lists, valid_terms, &top_k);
         }
 
         // print top 10 results
-        print_top_10(&top_10);
-        // printf("Top 10 results:\n");
-        // for (int i = (top_10.size - 1); i >= 0; i--) {
-        //     printf("DocID: %d, Score: %f\n", top_10.nodes[i].doc_id,
-        //            top_10.nodes[i].score);
-        // }
+        print_top_k(&top_k);
+        free_min_heap(&top_k);
 
         // Free allocated memory for terms and postings lists
         for (size_t i = 0; i < valid_terms; i++) {
@@ -940,3 +958,5 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
+// make heap size an argument
