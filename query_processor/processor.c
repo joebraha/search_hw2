@@ -168,7 +168,9 @@ void print_top_k(MinHeap *heap) {
     // Print the sorted array
     printf("Top %zu results:\n", heap->size);
     for (size_t i = 0; i < heap->size; i++) {
-        printf("%zu. DocID: %d, Score: %.2f\n", (i + 1), sorted_nodes[i].doc_id, sorted_nodes[i].score);
+        if (sorted_nodes[i].score > 0)
+            printf("%zu. DocID: %d, Score: %.2f\n", (i + 1),
+                   sorted_nodes[i].doc_id, sorted_nodes[i].score);
     }
 }
 
@@ -961,13 +963,13 @@ void parse_term(char *term) {
 
 int main(int argc, char *argv[]) {
     // read in lexicon into memory in hash table
-    load_lexicon("../index_generator/lexicon_out");
+    load_lexicon("lexicon_out");
 
     // read document lengths into memory
     load_doc_lengths("docs_out.txt");
 
     // open index file
-    FILE *index = fopen("../index_generator/final_index.dat", "rb");
+    FILE *index = fopen("final_index.dat", "rb");
 
     char search_mode_input[10];
     char query[1024];
