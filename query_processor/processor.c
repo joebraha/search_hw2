@@ -168,9 +168,9 @@ void print_top_k(MinHeap *heap) {
     // Print the sorted array
     printf("Top %zu results:\n", heap->size);
     for (size_t i = 0; i < heap->size; i++) {
-        if (sorted_nodes[i].score > 0)
-            printf("%zu. DocID: %d, Score: %.2f\n", (i + 1),
-                   sorted_nodes[i].doc_id, sorted_nodes[i].score);
+        // if (sorted_nodes[i].score > 0)
+        printf("%zu. DocID: %d, Score: %.2f\n", (i + 1), sorted_nodes[i].doc_id,
+               sorted_nodes[i].score);
     }
 }
 
