@@ -37,7 +37,7 @@ typedef struct {
     int curr_doc_id;     // current posting's docid
     int curr_freq;       // current posting's frequency
     size_t curr_posting; // pointer to current docid in the list
-    int curr_block;
+    size_t curr_block;
     int compressed; // 0 or 1, whether the current docid block is compressed
     int *curr_d_block_uncompressed;
     int *curr_f_block_uncompressed;
@@ -102,10 +102,10 @@ void swap(HeapNode *a, HeapNode *b) {
 }
 
 // heapify function to maintain heap property
-void heapify(MinHeap *heap, int i) {
-    int smallest = i;
-    int left = 2 * i + 1;
-    int right = 2 * i + 2;
+void heapify(MinHeap *heap, size_t i) {
+    size_t smallest = i;
+    size_t left = 2 * i + 1;
+    size_t right = 2 * i + 2;
 
     if (left < heap->size &&
         heap->nodes[left].score < heap->nodes[smallest].score) {
@@ -349,7 +349,7 @@ size_t retrieve_postings_lists(char **terms, size_t num_terms,
 
 // create a list pointer for a postings list
 ListPointer *open_list(PostingsList *postings_list) {
-    ListPointer *lp = (ListPointer *)malloc(sizeof(ListPointer));
+    ListPointer *lp = (ListPointer *)calloc(1, sizeof(ListPointer));
     if (!lp) {
         perror("Error allocating memory for list pointer");
         exit(EXIT_FAILURE);
@@ -525,9 +525,9 @@ int nextGEQ(ListPointer *lp, int k, PostingsList *postings_list) {
             BLOCK_SIZE *
             4; // allotting for extra space for uncompressed block of docids
         lp->curr_d_block_uncompressed =
-            malloc(max_uncompressed_size * sizeof(int));
+            calloc(max_uncompressed_size, sizeof(int));
         lp->curr_f_block_uncompressed =
-            malloc(max_uncompressed_size * sizeof(int));
+            calloc(max_uncompressed_size, sizeof(int));
         if (!lp->curr_d_block_uncompressed || !lp->curr_f_block_uncompressed) {
             perror("Error allocating memory for uncompressed blocks");
             exit(EXIT_FAILURE);
@@ -633,7 +633,7 @@ void c_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_k) {
     // step 2 - open all lists, keep array of listpointers in order of shortest
     // to largest docid list
     ListPointer *lp[num_terms];
-    int i;
+    size_t i;
     for (i = 0; i < num_terms; i++) {
         // printf("\tOpening list for term: %s\n", postings_lists[i].term);
         lp[i] = open_list(&postings_lists[i]);
@@ -766,7 +766,7 @@ void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_k) {
     // printf("Starting DAAT retrieval...\n");
     int greatest_doc_id = postings_lists[0].last_did;
     ListPointer *lp[num_terms];
-    int i;
+    size_t i;
     for (i = 0; i < num_terms; i++) {
         lp[i] = open_list(&postings_lists[i]);
         // printf("\tList opened for term: %s\n", lp[i]->term);
@@ -1026,12 +1026,14 @@ int main(int argc, char *argv[]) {
             num_results = atoi(argv[3]);
         }
         Query query;
-        query.query = malloc(1024);
+        query.query = calloc(1024, sizeof(char));
         size_t qlen = 1024;
 
         while (fscanf(batch, "%d ", &query.id) != EOF) {
             getline(&query.query, &qlen, batch);
             single_query(&query, num_results, DISJUNCTIVE, index, results);
+            memset(query.query, 0, qlen);
+            query.id = 0;
         }
         // Queries queries = build_batch_queries(batch);
         // batch_query(queries, num_results, index);
