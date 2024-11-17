@@ -1,6 +1,7 @@
 #include "uthash.h" // Include uthash header for hash table
 #include <ctype.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,7 @@ void insert(MinHeap *heap, int doc_id, double score) {
             i = (i - 1) / 2;
         }
     } else if (score > heap->nodes[0].score) {
+
         // Replace root if new score is higher
         // heap is full, insert current node only if it has a higher score than
         // the minimum value in the heap (the root)
@@ -826,49 +828,7 @@ void d_DAAT(PostingsList *postings_lists, size_t num_terms, MinHeap *top_k) {
             break;
         }
         did = lp[lowest_doc_id_index]->curr_doc_id;
-
-        // }
     }
-
-    // while (1) {
-    //     printf("\n\tCurrent docID: %d\n", did);
-    //     if (ready_to_sum(lp, num_terms, did)) {
-    //         printf("\tAll current docids are greater than or equal to current
-    //         docID: %d, ready to sum up scores.\n", did);
-    //         // all docids are greater than or equal to did, ready to sum up
-    //         // scores
-    //         score = 0; // reset score for new docID
-    //         for (i = 0; i < num_terms; i++) {
-    //             printf("\t\tcurrent docid for term %s: %d\n", lp[i]->term,
-    //             lp[i]->curr_doc_id); if (lp[i]->curr_doc_id == did) {
-    //                 score += get_score(lp[i]->curr_freq, lp[i]->curr_doc_id,
-    //                 lp[i]->num_entries); // add to score if
-    //                 (lp[i]->curr_doc_id == postings_lists[i].last_did) {
-    //                     lp[i]->curr_doc_id = -1; // no more docIDs in this
-    //                     list
-    //                 }
-    //             }
-    //         }
-    //         printf("\tInserting docID: %d with score: %f into heap.\n", did,
-    //         score);
-    //         // insert score into heap
-    //         insert(top_k, did, score);
-    //     }
-    //     printf("\tFinding lp index with lowest current docID...\n");
-    //     lowest_doc_id_index =
-    //         find_lp_with_lowest_doc_id(lp, num_terms, greatest_doc_id);
-    //     printf("\tLowest docID %d at lp index: %d\n",
-    //     lp[lowest_doc_id_index]->curr_doc_id, lowest_doc_id_index); if
-    //     (lowest_doc_id_index == -1) {
-    //         printf("\tNo more lists to check. Terminating search.\n");
-    //         // no more lists to check
-    //         break;
-    //     }
-    //     did = nextGEQ(lp[lowest_doc_id_index], (did + 1),
-    //                   &postings_lists[lowest_doc_id_index]);
-    //     printf("\tNext docid to check for term %s: %d\n",
-    //     lp[lowest_doc_id_index]->term, did);
-    // }
 
     // printf("\tTraversal complete.\n");
     for (i = 0; i < num_terms; i++) {
@@ -961,6 +921,78 @@ void parse_term(char *term) {
     *dst = '\0';
 }
 
+typedef struct {
+    int id;
+    char *query;
+} Query;
+
+// Function to output the top k results to the given file
+// file format is a newline separated list of query_id followed by relevant
+// docids in order separated by whitespaces
+void return_top_k(MinHeap *heap, FILE *results, int query_id) {
+    // Create an array to store the heap elements
+    HeapNode sorted_nodes[heap->size];
+    for (size_t i = 0; i < heap->size; i++) {
+        sorted_nodes[i] = heap->nodes[i];
+    }
+
+    // Sort the array by score in descending order
+    qsort(sorted_nodes, heap->size, sizeof(HeapNode), compare_scores);
+
+    fprintf(results, "%d ", query_id);
+    for (size_t i = 0; i < heap->size; i++) {
+        fprintf(results, "%d ", sorted_nodes[i].doc_id);
+    }
+    fprintf(results, "\n");
+}
+
+// processes a single query for the batch processing and writes the results to
+// the results file
+int single_query(Query *query, size_t heap_size, int search_mode, FILE *index,
+                 FILE *results) {
+    char *terms[MAX_TERMS];
+    size_t num_terms = 0;
+    char *term =
+        strtok(query->query, " \t\n\r\f\v!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
+    while (term != NULL && num_terms < MAX_TERMS) {
+        parse_term(term);
+        if (strlen(term) > 0) {
+            terms[num_terms++] = strdup(term);
+        }
+        term = strtok(NULL, " \t\n\r\f\v!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
+    }
+
+    // Retrieve postings lists for all terms in query
+    PostingsList postings_lists[num_terms];
+    size_t valid_terms =
+        retrieve_postings_lists(terms, num_terms, postings_lists, index);
+    if (valid_terms == 0) {
+        return 1; // Query invalid, try again with new query
+    }
+    // Perform DAAT traversal
+    // initialize top-k heap
+    MinHeap top_k;
+    init_min_heap(&top_k, heap_size);
+    printf("Performing search on %zu valid terms...\n", valid_terms);
+    if (search_mode == CONJUNCTIVE) {
+        c_DAAT(postings_lists, valid_terms, &top_k);
+    } else {
+        d_DAAT(postings_lists, valid_terms, &top_k);
+    }
+
+    // return top 10 results
+    return_top_k(&top_k, results, query->id);
+    free_min_heap(&top_k);
+
+    // Free allocated memory for terms and postings lists
+    for (size_t i = 0; i < valid_terms; i++) {
+        free(terms[i]);
+        free(postings_lists[i].compressed_d_list);
+        free(postings_lists[i].compressed_f_list);
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     // read in lexicon into memory in hash table
     load_lexicon("lexicon_out");
@@ -970,6 +1002,43 @@ int main(int argc, char *argv[]) {
 
     // open index file
     FILE *index = fopen("final_index.dat", "rb");
+
+    // added batch query processing for HW3
+    if (argc > 1 && !strcmp(argv[1], "-b")) {
+
+        if (argc == 2) {
+            printf("Usage: ./proc -b <query file> <num_results=10>\n");
+            printf("No file of batch queries provided. Bye bye.\n");
+            exit(EXIT_FAILURE);
+        }
+        FILE *batch = fopen(argv[2], "r");
+        if (!batch) {
+            perror("Error opening batch query file");
+            exit(EXIT_FAILURE);
+        }
+        FILE *results = fopen("query_results", "w");
+
+        int num_results = 10;
+        if (argc == 3) {
+            printf("No number of top results provided. Defaulting to 10.\n");
+
+        } else {
+            num_results = atoi(argv[3]);
+        }
+        Query query;
+        query.query = malloc(1024);
+        size_t qlen = 1024;
+
+        while (fscanf(batch, "%d ", &query.id) != EOF) {
+            getline(&query.query, &qlen, batch);
+            single_query(&query, num_results, DISJUNCTIVE, index, results);
+        }
+        // Queries queries = build_batch_queries(batch);
+        // batch_query(queries, num_results, index);
+        fclose(batch);
+        fclose(results);
+        exit(0);
+    }
 
     char search_mode_input[10];
     char query[1024];
