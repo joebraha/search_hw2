@@ -48,28 +48,6 @@ typedef struct {
 
 TermEntry *terms = NULL; // Hash table
 
-// // Define the array for the docs table
-// int *doc_table = NULL;
-
-// // this function loads the document lengths from a file into memory
-// void load_doc_lengths(const char *filename) {
-//     FILE *file = fopen(filename, "r");
-//     if (!file) {
-//         perror("Error opening document lengths file");
-//         exit(EXIT_FAILURE);
-//     }
-
-//     doc_table = (int *)malloc(N_DOCUMENTS * sizeof(int));
-
-//     int doc_id;
-//     int doc_length;
-//     while (fscanf(file, "%d %d", &doc_id, &doc_length) == 2) {
-//         doc_table[doc_id] = doc_length;
-//     }
-
-//     fclose(file);
-// }
-
 // this function reads the words_out file and populates the terms hash table
 // with the terms and their counts
 void read_words_out(const char *filename) {
@@ -111,30 +89,6 @@ void pipe_to_file(MemoryBlock *blocks, FILE *file) {
     blocks->size = 0;
 }
 
-// // function to calculate BM25 score of a single word in a document
-// double get_score(int freq, int doc_id, int num_entries) {
-//     double k1 = 1.2;               // free parameter
-//     double b = 0.75;               // free parameter
-//     double avg_doc_length = 66.93; // average document length
-//     int d = doc_table[doc_id];     // length of this document
-
-//     double score;
-//     int f = freq; // term frequency in this document
-//     double tf = 0.0;
-//     double numerator = f * (k1 + 1.0);
-//     double denominator = f + k1 * (1.0 - b + b * (d / avg_doc_length));
-//     tf = numerator / denominator;
-//     double idf;
-//     denominator = num_entries + 0.5;
-//     numerator = N_DOCUMENTS - num_entries + 0.5;
-//     idf = log((numerator / denominator) + 1.0);
-//     score = (idf * tf);
-
-//     // usually between 1 and 2, so scale by 100 and store the int value in a
-//     // byte
-//     unsigned char ret = (unsigned char)(score * 100);
-//     return ret;
-// }
 
 // this function takes in a memory block structure and either adds
 // it to the blocks array in memory or writes all of the blocks
@@ -200,6 +154,14 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
         add_to_index(docids, current_block_number, blocks, findex);
         add_to_index(freqs, current_block_number, blocks, findex);
         current_entry->num_blocks++;
+    }
+
+    if (current_entry->start_d_block == -1) {
+        // first posting of term is being inserted, set lexicon attributes correctly ***
+        current_entry->start_d_block = *current_block_number;
+        current_entry->start_d_offset = docids->size;
+        current_entry->start_f_offset = freqs->size;
+        current_entry->num_blocks = 0;
     }
 
     // add compressed docid and freq to docids and freqs blocks
@@ -352,9 +314,9 @@ void create_inverted_index(const char *sorted_file_path) {
                 &current_entry, 0,
                 sizeof(LexiconEntry)); // Zero out the memory of current_entry
             current_entry.term = strdup(word);
-            current_entry.start_d_block = current_block_number;
-            current_entry.start_d_offset = docids->size;
-            current_entry.start_f_offset = freqs->size;
+            current_entry.start_d_block = -1;
+            current_entry.start_d_offset = -1;
+            current_entry.start_f_offset = -1;
             current_entry.count = 0;
 
             // Get the correct number of entries for the term so we can
