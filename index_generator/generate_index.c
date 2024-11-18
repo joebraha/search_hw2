@@ -89,7 +89,6 @@ void pipe_to_file(MemoryBlock *blocks, FILE *file) {
     blocks->size = 0;
 }
 
-
 // this function takes in a memory block structure and either adds
 // it to the blocks array in memory or writes all of the blocks
 // to disc to make room for the new block
@@ -138,9 +137,10 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
     compressed_freq_size = varbyte_encode(count, compressed_freq_data);
 
     if ((docids->size + compressed_doc_size) > BLOCK_SIZE) {
-        // *** now that we aren't doing impact scores here anymore, should we also check for overflowing the frequencies block?
-        // doc ids block is full, put docids block and freqs block in index
-        // pad docids block with 0s so it is a full BLOCK_SIZE sized block
+        // *** now that we aren't doing impact scores here anymore, should we
+        // also check for overflowing the frequencies block? doc ids block is
+        // full, put docids block and freqs block in index pad docids block with
+        // 0s so it is a full BLOCK_SIZE sized block
         if (docids->size < BLOCK_SIZE) {
             memset(docids->data + docids->size, 0,
                    BLOCK_SIZE - docids->size); // pad with 0s
@@ -157,7 +157,8 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
     }
 
     if (current_entry->start_d_block == -1) {
-        // first posting of term is being inserted, set lexicon attributes correctly ***
+        // first posting of term is being inserted, set lexicon attributes
+        // correctly ***
         current_entry->start_d_block = *current_block_number;
         current_entry->start_d_offset = docids->size;
         current_entry->start_f_offset = freqs->size;
