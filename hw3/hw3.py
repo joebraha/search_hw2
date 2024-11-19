@@ -46,16 +46,21 @@ M = 4  # TODO: fine tune these (inc. ef_*)
 k = 10  # number of nearest neighbors to fetch for each query
 
 
-# calculates HNSW rankings on all queries in queries_path file, and return indicies
+# calculates HNSW rankings on all queries in queries_path file, and
+# return dict mapping query_id -> ranked closest neighbors
 def calculate_hnsw(ids, embeddings, index):
     D, I = index.search(embeddings, k)
     print(ids[:5], I[:5])
-    return I
+    mapped = {}
+    for i in range(len(ids)):
+        mapped[ids[i]] = I[i]
+    return mapped
 
 
-def evaluate(results):
+# TODO: fill in each eval method for relevant qrels (see Mehran email and Piazza for info)
+def evaluate(run, qrels):
     # do MRR, Recall, NDCG x2/MAP evaluation
-    ...
+    ranx.evaluate(qrels, run, "ndcg@5")
 
 
 def get_embeddings_from_docids(docids, dids, dembeddings):
@@ -68,14 +73,15 @@ def get_embeddings_from_docids(docids, dids, dembeddings):
     return index
 
 
+# returns dict of query_id -> nparray of closest k ranked neighbors
 def double_rank(qids, qembeddings, queries: dict):
     # open the file and find the query strings
     ret = {}
-    for query, docids in queries.items():
+    for query_id, docids in queries.items():
         index = get_embeddings_from_docids(docids, dids, dembeddings)
-        qembedded = qembeddings[(qids == query)]
+        qembedded = qembeddings[(qids == query_id)]
         D, I = index.search(qembedded, k)
-        ret[query] = I
+        ret[query_id] = I
     return ret
 
 
@@ -109,22 +115,54 @@ def read_results(file: str):
     return results
 
 
+# takes the common format of query results and construct a ranx Run for it
+def construct_qrels_run(query_results: dict[int, list[int]], name):
+    out = {}
+    for q, ranks in query_results.items():
+        # l = len(ranks)
+        qstr = str(q)
+        out[qstr] = {}
+        for i in range(len(ranks)):
+            # using simple scoring scheme advised by Mehran
+            out[qstr][str(ranks[i])] = 1 / (i + 1)
+    for i in out:  # just for debugging
+        print(i, out[i])
+        return ranx.Run(out, name)
+
+
 if __name__ == "__main__":
+    # TODO: need to construct separate runs for each of the 3 qrels files,
+    #       for each of the three methods. So 9 runs total
+    #       And note will need to only do it for queries in qrels files
+
     # before doing this: run bm25 on 10 results to 1 file, and do it on 100ish results to another file
-    # bm25_rank = read_results("bm25_rank")
+    bm25_rank = read_results("bm25_rank")
 
     qids, qembeddings = load_h5_embeddings(queries_path)
     dids, dembeddings = load_h5_embeddings(file_path)
     print(qids[:5], qembeddings[:5])
 
     # HNSW run
-    # index = build_index(dids, dembeddings)
-    # print(index)
-    # vector_rank = calculate_hnsw(qids, qembeddings, index)
+    index = build_index(dids, dembeddings)
+    print(index)
+    vector_rank = calculate_hnsw(qids, qembeddings, index)
 
     bm25_big = read_results("bm25_big")
     double_rank = double_rank(qids, qembeddings, bm25_big)
 
-    # evaluate(bm25_rank)
-    evaluate(vector_rank)
-    evaluate(double_rank)
+    # hit an error where qrels.dev didn't have the legacy 0 column, so added it with
+    # awk '{print $1, "0", $2, $3}' qrels.dev.tsv | columns -t > fixedqrels.dev
+    qrels_dev = ranx.Qrels.from_file(dir + "fixedqrels.dev", "trec")
+    qrels_eval1 = ranx.Qrels.from_file(dir + "qrels.eval.one.tsv", "trec")
+    qrels_eval2 = ranx.Qrels.from_file(dir + "qrels.eval.two.tsv", "trec")
+
+    # there should at the end be 9 of these
+    run1 = construct_qrels_run(bm25_rank, "bm25")
+    run2 = construct_qrels_run(vector_rank, "hnsw")
+    # TODO: debug, this might be empty
+    run3 = construct_qrels_run(double_rank, "rerank")
+
+    # examples:
+    evaluate(run1, qrels_dev)
+    evaluate(run2, qrels_dev)
+    evaluate(run3, qrels_dev)
