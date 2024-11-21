@@ -9,7 +9,6 @@
 #define MAX_WORD_SIZE (size_t)190
 #define INDEX_MEMORY_SIZE (size_t)(128 * 1024 * 1024) // 128MB
 #define MAX_BLOCKS 1000 // Maximum number of blocks for one term- overestimating
-// #define N_DOCUMENTS 8841823 // Number of documents in the collection
 
 typedef struct {
     size_t size;
@@ -121,7 +120,7 @@ size_t varbyte_encode(int value, unsigned char *output) {
 }
 
 // this function takes a doc_id and count, compresses the doc_id,
-// compresses the scor, and adds both to the appropriate blocks
+// compresses the frequency, and adds both to the appropriate blocks
 void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
                     int count, int *current_block_number, MemoryBlock *blocks,
                     FILE *findex, LexiconEntry *current_entry) {
@@ -137,9 +136,7 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
     compressed_freq_size = varbyte_encode(count, compressed_freq_data);
 
     if ((docids->size + compressed_doc_size) > BLOCK_SIZE) {
-        // *** now that we aren't doing impact scores here anymore, should we
-        // also check for overflowing the frequencies block? doc ids block is
-        // full, put docids block and freqs block in index pad docids block with
+        // doc ids block is full, put docids block and freqs block in index pad docids block with
         // 0s so it is a full BLOCK_SIZE sized block
         if (docids->size < BLOCK_SIZE) {
             memset(docids->data + docids->size, 0,
@@ -158,7 +155,6 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
 
     if (current_entry->start_d_block == -1) {
         // first posting of term is being inserted, set lexicon attributes
-        // correctly ***
         current_entry->start_d_block = *current_block_number;
         current_entry->start_d_offset = docids->size;
         current_entry->start_f_offset = freqs->size;
@@ -169,7 +165,6 @@ void insert_posting(MemoryBlock *docids, MemoryBlock *freqs, int doc_id,
     memcpy(docids->data + docids->size, compressed_doc_data,
            compressed_doc_size);
     docids->size += compressed_doc_size;
-    // freqs->data[freqs->size++] = score;
     memcpy(freqs->data + freqs->size, compressed_freq_data,
            compressed_freq_size);
     freqs->size += compressed_freq_size;
@@ -202,7 +197,6 @@ void create_inverted_index(const char *sorted_file_path) {
         exit(EXIT_FAILURE);
     }
 
-    // load_doc_lengths("docs_out.txt");
     read_words_out("words_out.txt");
 
     // Allocate memory for blocks array- this will hold all the compressed

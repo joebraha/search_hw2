@@ -27,14 +27,6 @@ def load_h5_embeddings(file_path, id_key="id", embedding_key="embedding"):
     print(f"Loaded {len(ids)} embeddings.")
     return ids, embeddings
 
-# what does this function do?
-def get_subset_h5(ids, embeddings, id_subset: set):
-    filtered = embeddings[(ids in id_subset)]
-    fids = ids[(ids in id_subset)]
-    print(len(filtered))
-    print(fids[:5], filtered[:5])
-    return fids, filtered
-
 
 # might need to adjust these appropriately based on your file directory structure
 dir = "MSMARCO-Embeddings/"
@@ -43,8 +35,7 @@ queries_path = dir + "msmarco_queries_dev_eval_embeddings.h5"
 query_strings_dir = dir + "queries/"
 qproc = "./proc"
 
-# M = 4  # TODO: fine tune these (inc. ef_*)
-k = 10  # number of nearest neighbors to fetch for each query
+k = 100  # number of nearest neighbors to fetch for each query
 
 # from Mehran's post
 # EF_Search should be significantly greater than K. 
@@ -54,14 +45,12 @@ k = 10  # number of nearest neighbors to fetch for each query
 # return dict mapping query_id -> ranked closest neighbors
 def calculate_hnsw(ids, embeddings, index):
     D, I = index.search(embeddings, k)
-    # print(ids[:5], I[:5])
     mapped = {}
     for i in range(len(ids)):
         mapped[ids[i]] = I[i]
     return mapped
 
 
-# TODO: fill in each eval method for relevant qrels (see Mehran email and Piazza for info)
 def evaluate(run, qrels, eval_or_dev):
     results = {}
     if eval_or_dev == 1:
@@ -80,7 +69,6 @@ def evaluate(run, qrels, eval_or_dev):
 
 def get_embeddings_from_docids(docids, dids, dembeddings):
     # creates a HNSW index on only the given docids
-    # d = dids[(dids in docids)]
     # Filter the document IDs and embeddings to include only those in docids
     mask = np.isin(dids, docids)
     filtered_dids = dids[mask]
@@ -97,10 +85,7 @@ def get_embeddings_from_docids(docids, dids, dembeddings):
 
 # returns dict of query_id -> nparray of closest k ranked neighbors
 def double_rank(qids, qembeddings, queries: Dict, dids, dembeddings):
-    # open the file and find the query strings
 
-    # temporary
-    # k = 10
     ret = {}
     for query_id, docids in queries.items():
         index = get_embeddings_from_docids(docids, dids, dembeddings)
@@ -132,10 +117,6 @@ def build_index(ids, embeddings, m=4, ef_construction=50, ef_search=50) -> faiss
 
     # Wrap the HNSW index with IndexIDMap
     index = faiss.IndexIDMap(hnsw_index)
-
-    # index = faiss.IndexIDMap(faiss.IndexHNSWFlat(dim, m))
-    # index.hnsw.efConstruction = ef_construction
-    # index.hnsw.efSearch = ef_search
 
     print(f"\t\tTrained: {index.is_trained}")
     print("\t\tAdding documents to index...")
@@ -173,8 +154,6 @@ def construct_qrels_run(query_results: Dict[int, List[int]], name: str):
         for i in range(len(ranks)):
             # using simple scoring scheme advised by Mehran
             out[qstr][str(ranks[i])] = 1 / (i + 1)
-    # for i in out:  # just for debugging
-    #     print(i, out[i])
     return ranx.Run(out, name)
 
 def load_query_ids(query_file):
@@ -190,20 +169,6 @@ def print_results(results):
         print(f"{k}: {v}")
 
 if __name__ == "__main__":
-    # TODO: need to construct separate runs for each of the 3 qrels files,
-    #       for each of the three methods. So 9 runs total
-    #       And note will need to only do it for queries in qrels files
-    # runs:
-    # 1. dev BM25
-    # 2. dev HNSW
-    # 3. dev rerank
-    # 4. one BM25
-    # 5. one HNSW
-    # 6. one rerank
-    # 7. two BM25
-    # 8. two HNSW
-    # 9. two rerank
-
 
     # Load embeddings for all queries to be evaluated
     qids, qembeddings = load_h5_embeddings(queries_path)
@@ -234,7 +199,6 @@ if __name__ == "__main__":
     # HNSW run for each set of queries
     print("\nBuilding HNSW index...")
     index = build_index(dids, dembeddings)
-    # print(index)
     print("\nCalculating HNSW rankings...")
     vector_rank_dev = calculate_hnsw(qids_dev, qembeddings_dev, index)
     vector_rank_one = calculate_hnsw(qids_one, qembeddings_one, index)
