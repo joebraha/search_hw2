@@ -1,0 +1,7 @@
+FROM llama3.2:1b
+
+PARAMETER temperature 0.0
+
+SYSTEM """
+Rephrase this passage of text in simpler language and only output the generated content, no notes or introductions needed, no line breaks:
+"""
