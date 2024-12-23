@@ -29,7 +29,7 @@ def load_h5_embeddings(file_path, id_key="id", embedding_key="embedding"):
 
 
 # might need to adjust these appropriately based on your file directory structure
-dir = "MSMARCO-Embeddings/"
+dir = "../hw3/MSMARCO-Embeddings/"
 file_path = dir + "msmarco_passages_embeddings_subset.h5"
 queries_path = dir + "msmarco_queries_dev_eval_embeddings.h5"
 query_strings_dir = dir + "queries/"

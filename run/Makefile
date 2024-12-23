@@ -44,5 +44,5 @@ dir_check:
 	mkdir -p exe
 
 clean:
-	rm exe/*
+	rm -r exe/*
 

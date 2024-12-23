@@ -9,5 +9,6 @@ braha2
 
 run/*
 !*/Makefile
+!*/run_eval.sh
 
 .DS_Store
