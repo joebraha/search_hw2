@@ -1,4 +1,4 @@
-!#/bin/bash
+!#/bin/bash -e
 
 # make sure we have all the necessary files in the run/ dir:
 # - collection.tsv
@@ -8,13 +8,13 @@
 make all
 make index
 
-exe/proc -b sorted_queries_dev 500
+exe/proc -b sorted_queries_dev 300
 mv query_results bm25_rank_dev
 
-exe/proc -b sorted_queries_one 500
+exe/proc -b sorted_queries_one 300
 mv query_results bm25_rank_one
 
-exe/proc -b sorted_queries_two 500
+exe/proc -b sorted_queries_two 300
 mv query_results bm25_rank_two
 
-python3 ../hw3/hw3.py >eval_results.txt
+python3 ../project/eval.py

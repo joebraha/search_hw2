@@ -867,13 +867,13 @@ int single_query(Query *query, size_t heap_size, int search_mode, FILE *index,
 
 int main(int argc, char *argv[]) {
     // read in lexicon into memory in hash table
-    load_lexicon("../query_processor/lexicon_out");
+    load_lexicon("lexicon_out");
 
     // read document lengths into memory
-    load_doc_lengths("../query_processor/docs_out.txt");
+    load_doc_lengths("docs_out.txt");
 
     // open index file
-    FILE *index = fopen("../query_processor/final_index.dat", "rb");
+    FILE *index = fopen("final_index.dat", "rb");
 
     // added batch query processing for HW3
     if (argc > 1 && !strcmp(argv[1], "-b")) {
