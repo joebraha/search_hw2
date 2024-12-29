@@ -30,7 +30,7 @@ def load_h5_embeddings(file_path, id_key="id", embedding_key="embedding"):
 
 # might need to adjust these appropriately based on your file directory structure
 dir = "../hw3/MSMARCO-Embeddings/"
-file_path = dir + "msmarco_passages_embeddings_subset.h5"
+file_path = dir + "filtered_embeddings.h5"
 queries_path = dir + "msmarco_queries_dev_eval_embeddings.h5"
 query_strings_dir = dir + "queries/"
 qproc = "./proc"
@@ -109,7 +109,7 @@ def double_rank(qids, qembeddings, queries: Dict, dids, dembeddings):
 
 
 def build_index(
-    ids, embeddings, m=4, ef_construction=50, ef_search=50
+    ids, embeddings, m=8, ef_construction=200, ef_search=200
 ) -> faiss.IndexIDMap:
     print("\t* Building index...")
     dim = len(embeddings[0])
@@ -124,8 +124,9 @@ def build_index(
     index = faiss.IndexIDMap(hnsw_index)
 
     print(f"\t\tTrained: {index.is_trained}")
-    print("\t\tAdding documents to index...")
+    print(f"\t\tAdding {len(ids)} documents to index...")
     index.add_with_ids(embeddings, ids)
+    # print("\t\tIndex built.")
     print(f"\t\tNumber of documents: {index.ntotal}")
     return index
 
@@ -176,8 +177,16 @@ def print_results(results):
     for k, v in results.items():
         print(f"{k}: {v}")
 
+def write_results_to_file(file_path, results_dict):
+    with open(file_path, 'w') as f:
+        for section, results in results_dict.items():
+            f.write(f"{section}:\n")
+            for method, result in results.items():
+                f.write(method + ": " + str(result) + "\n")
+            f.write("\n")
 
 if __name__ == "__main__":
+    print("EVALUATION FOR... document rewording expansion for BM25@100 vs original HNSW vs original rerank@500")
     # Load embeddings for all queries to be evaluated
     qids, qembeddings = load_h5_embeddings(queries_path)
 
@@ -199,16 +208,16 @@ if __name__ == "__main__":
         qids, qembeddings, query_ids_two
     )
 
-    # Load embeddings for all 1M documents in subset of collection
+    # Load embeddings for all documents in subset of collection
     print("Loading document embeddings...")
     dids, dembeddings = load_h5_embeddings(file_path)
     print(qids[:5], qembeddings[:5])
 
     # Generate BM25 results for top 100 results for each query file
-    print("\nGenerating BM25 results...")
-    bm25_rank_dev = read_results("bm25_rank_dev")
-    bm25_rank_one = read_results("bm25_rank_one")
-    bm25_rank_two = read_results("bm25_rank_two")
+    print("\nGenerating BM25 results for document rewording method...")
+    bm25_rank_dev = read_results("10k_q_expand_reword_query_results_dev")
+    bm25_rank_one = read_results("10k_q_expand_reword_query_results_one")
+    bm25_rank_two = read_results("10k_q_expand_reword_query_results_two")
 
     # HNSW run for each set of queries
     print("\nBuilding HNSW index...")
@@ -221,16 +230,24 @@ if __name__ == "__main__":
     # Combined reranking results for each set of queries
     print("\nCalculating rerank rankings...")
     print("for DEV")
+    # read in BM25@500 for dev
+    bm25_dev_500 = read_results("10k_orig_query_results_dev_500")
     double_rank_dev = double_rank(
-        qids_dev, qembeddings_dev, bm25_rank_dev, dids, dembeddings
+        qids_dev, qembeddings_dev, bm25_dev_500, dids, dembeddings
     )
+
     print("\nfor EVAL ONE")
+    # read in BM25@500 for one
+    bm25_one_500 = read_results("10k_orig_query_results_one_500")
     double_rank_one = double_rank(
-        qids_one, qembeddings_one, bm25_rank_one, dids, dembeddings
+        qids_one, qembeddings_one, bm25_one_500, dids, dembeddings
     )
+
     print("\nfor EVAL TWO")
+    # read in BM25@500 for two
+    bm25_two_500 = read_results("10k_orig_query_results_two_500")
     double_rank_two = double_rank(
-        qids_two, qembeddings_two, bm25_rank_two, dids, dembeddings
+        qids_two, qembeddings_two, bm25_two_500, dids, dembeddings
     )
 
     # Load qrels files
@@ -243,19 +260,26 @@ if __name__ == "__main__":
 
     # Construct runs for each method and each set of queries
     print("Constructing runs...")
+    # DEV
     bm25_dev = construct_qrels_run(bm25_rank_dev, "bm25")
     hnsw_dev = construct_qrels_run(vector_rank_dev, "hnsw")
     rerank_dev = construct_qrels_run(double_rank_dev, "rerank")
 
+    # EVAL ONE
     bm25_one = construct_qrels_run(bm25_rank_one, "bm25")
     hnsw_one = construct_qrels_run(vector_rank_one, "hnsw")
     rerank_one = construct_qrels_run(double_rank_one, "rerank")
 
+    # EVAL TWO
     bm25_two = construct_qrels_run(bm25_rank_two, "bm25")
     hnsw_two = construct_qrels_run(vector_rank_two, "hnsw")
     rerank_two = construct_qrels_run(double_rank_two, "rerank")
 
     # Evaluate each run
+
+    # Define the file path for the results
+    results_file = "q_expand_reword_vs_original_results.txt"
+
     # qrels.dev
     print("Evaluating runs for dev...")
     dev_bm25_results = evaluate(bm25_dev, qrels_dev, 1)
@@ -274,24 +298,40 @@ if __name__ == "__main__":
     eval2_hnsw_results = evaluate(hnsw_two, qrels_eval2, 2)
     eval2_rerank_results = evaluate(rerank_two, qrels_eval2, 2)
 
-    # Print results
-    print("\nDev BM25 results:")
-    print_results(dev_bm25_results)
-    print("\nDev HNSW results:")
-    print_results(dev_hnsw_results)
-    print("\nDev rerank results:")
-    print_results(dev_rerank_results)
+    # Collect all results in a dictionary
+    results_dict = {
+        "Dev BM25 results": dev_bm25_results,
+        "Dev HNSW results": dev_hnsw_results,
+        "Dev rerank results": dev_rerank_results,
+        "Eval one BM25 results": eval1_bm25_results,
+        "Eval one HNSW results": eval1_hnsw_results,
+        "Eval one rerank results": eval1_rerank_results,
+        "Eval two BM25 results": eval2_bm25_results,
+        "Eval two HNSW results": eval2_hnsw_results,
+        "Eval two rerank results": eval2_rerank_results,
+    }
 
-    print("\nEval one BM25 results:")
-    print_results(eval1_bm25_results)
-    print("\nEval one HNSW results:")
-    print_results(eval1_hnsw_results)
-    print("\nEval one rerank results:")
-    print_results(eval1_rerank_results)
+    # Write all results to a single file
+    write_results_to_file(results_file, results_dict)
 
-    print("\nEval two BM25 results:")
-    print_results(eval2_bm25_results)
-    print("\nEval two HNSW results:")
-    print_results(eval2_hnsw_results)
-    print("\nEval two rerank results:")
-    print_results(eval2_rerank_results)
+    # # Print results
+    # print("\nDev BM25 results:")
+    # print_results(dev_bm25_results)
+    # print("\nDev HNSW results:")
+    # print_results(dev_hnsw_results)
+    # print("\nDev rerank results:")
+    # print_results(dev_rerank_results)
+
+    # print("\nEval one BM25 results:")
+    # print_results(eval1_bm25_results)
+    # print("\nEval one HNSW results:")
+    # print_results(eval1_hnsw_results)
+    # print("\nEval one rerank results:")
+    # print_results(eval1_rerank_results)
+
+    # print("\nEval two BM25 results:")
+    # print_results(eval2_bm25_results)
+    # print("\nEval two HNSW results:")
+    # print_results(eval2_hnsw_results)
+    # print("\nEval two rerank results:")
+    # print_results(eval2_rerank_results)
